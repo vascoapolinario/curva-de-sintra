@@ -12,6 +12,7 @@ var talking_until: Dictionary = {}
 var last_packet: Dictionary = {}
 var game: Node
 var active = false
+var input_level = 0.0
 
 func enable_microphone(value: bool) -> void:
 	enabled = value
@@ -38,14 +39,18 @@ func enable_microphone(value: bool) -> void:
 	microphone.play()
 
 func _process(_delta: float) -> void:
-	active = enabled and game.running and not game.menu.visible and Input.is_physical_key_pressed(KEY_V)
+	active = enabled and game.running and not game.input_blocked() and (Input.is_action_pressed("talk") or game.prefs.values.voice_mode==1)
+	input_level = move_toward(input_level,0,_delta*1.5)
 	if enabled and capture:
 		var input_frames = int(AudioServer.get_mix_rate()*0.02)
 		var batches = 0
 		while capture.can_get_buffer(input_frames) and batches < 5:
 			batches += 1
 			var samples = capture.get_buffer(input_frames)
-			if not active or game.mode == "solo": continue
+			var peak = 0.0
+			for frame in samples: peak = maxf(peak,absf(frame.x)*game.prefs.values.mic_gain)
+			input_level = maxf(input_level,peak)
+			if not active or game.mode == "solo" or peak < game.prefs.values.noise_gate: continue
 			var packet = PackedByteArray()
 			packet.resize(PACKET_FRAMES*2)
 			for i in PACKET_FRAMES:
@@ -54,7 +59,7 @@ func _process(_delta: float) -> void:
 				var to = maxi(from+1,int(float(i+1)*input_frames/PACKET_FRAMES))
 				var sample = 0.0
 				for j in range(from,to): sample += (samples[j].x+samples[j].y)*0.5
-				sample /= float(to-from)
+				sample *= game.prefs.values.mic_gain/float(to-from)
 				packet.encode_s16(i*2,int(clampf(sample,-1,1)*32767))
 			if multiplayer.is_server():
 				_deliver.rpc(multiplayer.get_unique_id(),packet)
@@ -93,6 +98,7 @@ func _receive(sender: int, packet: PackedByteArray) -> void:
 		stream.mix_rate = RATE
 		stream.buffer_length = 0.16
 		output.stream = stream
+		output.bus = "Voice"
 		add_child(output)
 		output.play()
 		outputs[sender] = output

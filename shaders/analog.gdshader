@@ -4,6 +4,7 @@ uniform bool camcorder = false;
 uniform float grain_amount : hint_range(0.0, 0.2) = 0.035;
 uniform float brightness : hint_range(0.7, 1.8) = 1.12;
 uniform float pixel_size = 1.7;
+uniform bool scanlines = true;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898,78.233))) * 43758.5453); }
 void fragment() {
     vec2 resolution = 1.0 / SCREEN_PIXEL_SIZE;
@@ -18,7 +19,7 @@ void fragment() {
         c += (hash(vec2(floor(uv.y*240.0), floor(TIME*12.0)))-0.5)*0.027;
     }
     c += n * grain_amount * (camcorder ? 1.8 : 1.0);
-    c *= 1.0 - 0.07 * step(0.5, fract(SCREEN_UV.y * resolution.y / 3.0));
+    if (scanlines) c *= 1.0 - 0.07 * step(0.5, fract(SCREEN_UV.y * resolution.y / 3.0));
     vec2 v = SCREEN_UV * (1.0 - SCREEN_UV.yx);
     c *= clamp(pow(v.x*v.y*18.0, 0.22), 0.30, 1.0);
     COLOR = vec4(c,1.0);
