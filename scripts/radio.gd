@@ -21,7 +21,9 @@ func setup(owner_game: Node) -> void:
 	for i in 3:
 		var files: Array = []
 		var directory = "res://assets/radio/"+FOLDERS[i]
-		for file in DirAccess.get_files_at(directory):
+		# Empty optional station folders are omitted from exported packages.
+		var entries=DirAccess.get_files_at(directory) if DirAccess.dir_exists_absolute(directory) else PackedStringArray()
+		for file in entries:
 			var clean = file.trim_suffix(".remap")
 			if clean.get_extension().to_lower() in ["wav","mp3","ogg"] and not directory.path_join(clean) in files:
 				files.append(directory.path_join(clean))
