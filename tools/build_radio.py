@@ -46,6 +46,7 @@ for station,bpm,name in [(0,96,'midnight_orchard.wav'),(1,78,'last_tram.wav'),(2
     buf=np.convolve(buf,np.ones(3)/3,'same')
     fade=np.minimum(np.arange(len(buf))/rate/0.5,1)*np.minimum((len(buf)-np.arange(len(buf)))/rate/1.5,1)
     save(name,buf*fade)
-t=np.arange(int(.38*rate))/rate;save('tuning.wav',rng.normal(0,.18,len(t))*np.exp(-t*8))
+import runpy
+runpy.run_path(str(Path(__file__).with_name('build_tuning.py')))
 for folder in ['01_estrada','02_nocturno','03_frequencia']: (root/folder).mkdir(exist_ok=True)
 print('Original radio tracks built.')

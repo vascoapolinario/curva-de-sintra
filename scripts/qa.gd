@@ -9,17 +9,20 @@ func check(ok: bool, message: String) -> void:
 
 func run(game: Node, mode: String) -> void:
 	g = game
-	if mode.begins_with("effects_"):
-		await effects_network(mode)
-		return
-	if mode.begins_with("nightnet"):
-		await nightnet(mode)
-		return
-	if mode.begins_with("host") or mode.begins_with("join"):
-		await network(mode)
-		return
-	g._start_solo()
+	g._start_game()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	if mode=="roles":
+		roles_test()
+		return
+	if mode=="roles_screenshots":
+		await roles_screenshots()
+		return
+	if mode=="woodland":
+		woodland_test()
+		return
+	if mode=="woodland_screenshots":
+		await woodland_screenshots()
+		return
 	if mode=="route":
 		route()
 		return
@@ -79,32 +82,257 @@ func smoke() -> void:
 	g._process(0.016)
 	check(not g.car.cam_prop.visible and g.car.camera.position.z < -0.4,"Optical camcorder viewpoint")
 	check(g.forest.ghost.visible,"Camcorder apparition")
-	g.car.update_remote(1,Vector3(0,0,1),1)
-	check(g.car.remote_tools[1].visible,"Remote navigator map")
-	g.car.update_remote(2,Vector3(0,0,1),1)
-	check(g.car.remote_tools[2].visible,"Remote held camcorder")
-	g.prefs.bind_key("map",KEY_N)
-	check(InputMap.action_get_events("map")[0].physical_keycode==KEY_N,"Key rebinding")
-	g.prefs.bind_key("map",KEY_M)
+	g.car.update_occupant(1,Vector3(0,0,1),1)
+	check(g.car.occupant_tools[1].visible,"Navigator held map")
+	g.car.update_occupant(2,Vector3(0,0,1),1)
+	check(g.car.occupant_tools[2].visible,"Rear occupant held camcorder")
+	g.prefs.bind_key("accelerate",KEY_T)
+	check(InputMap.action_get_events("accelerate")[0].physical_keycode==KEY_T,"Key rebinding")
+	g.prefs.bind_key("accelerate",KEY_W)
 	g.car.position=g.forest.destination
 	g._simulate(0.016)
 	check(g.won,"Arrival")
 	print("QA_SMOKE failures=",failures," signs=",g.forest.sign_positions.size()," minimum_minutes=",g.forest.region.minimum_distance/11.5/60)
 	get_tree().quit(0 if failures.is_empty() else 1)
 
+func press_key(code: int) -> void:
+	var event=InputEventKey.new()
+	event.physical_keycode=code
+	event.keycode=code
+	event.pressed=true
+	g._unhandled_input(event)
+
+func mouse_click(pressed: bool=true) -> void:
+	var event=InputEventMouseButton.new()
+	event.button_index=MOUSE_BUTTON_LEFT
+	event.pressed=pressed
+	g._unhandled_input(event)
+
+func aim(at: Vector3) -> void:
+	g.car.look.look_at(g.car.to_global(at))
+	g.car.animate(1,0,0,g.tool_on,0)
+	g.interactions.animate(1)
+
+func roles_test() -> void:
+	check(not g.has_method("_host") and not g.has_method("_join"),"No connection entry points")
+	for action in ["horn","headlights","map","camera","interior_light","instrument_light","brake","radio_panel","talk"]:
+		check(not InputMap.has_action(action) and not g.prefs.bindings.has(action),"Removed binding "+action)
+	for code in [KEY_H,KEY_L,KEY_I,KEY_O,KEY_M,KEY_C,KEY_R]: press_key(code)
+	check(g.effects.headlights and not g.effects.honking and g.cabin_lights.front_mode==0,"Old keys do nothing")
+	aim(g.car.to_local(g.interactions.headlight_button.global_position))
+	check(g.interactions.hit()=="headlights","Reachable wheel button")
+	mouse_click()
+	check(not g.effects.headlights,"Click switches headlights off")
+	mouse_click(false)
+	mouse_click()
+	check(g.effects.headlights,"Click switches headlights on")
+	mouse_click(false)
+	for turn in [-1.0,0.0,1.0]:
+		g.car.animate(1,0,turn,false,0)
+		g.car.look.look_at(g.interactions.headlight_button.global_position)
+		g.car.limit_look(false)
+		check(g.interactions.hit()=="headlights","Headlight button follows wheel "+str(turn))
+		g.car.look.look_at(g.car.horn_pad.global_position)
+		check(g.interactions.hit()=="horn","Horn target follows wheel "+str(turn))
+		mouse_click()
+		g.effects._process(0.01)
+		check(g.effects.honking and not g.pointing,"Wheel press honks without pointing")
+		mouse_click(false)
+		check(not g.effects.honking,"Mouse release stops horn")
+	for seat in 3:
+		g._set_seat(seat)
+		for control in g.cabin_lights.targets:
+			var allowed=(seat==2 if control=="rear_light" else seat<2)
+			check(g.cabin_lights.use(control)==allowed,"Lamp permission "+control+str(seat))
+			if allowed:
+				aim(g.cabin_lights.targets[control])
+				check(g.cabin_lights.hit()==control,"Reachable lamp "+control+str(seat))
+				var state=[g.cabin_lights.front_mode,g.cabin_lights.rear_on]
+				mouse_click()
+				mouse_click(false)
+				check(state!=[g.cabin_lights.front_mode,g.cabin_lights.rear_on],"Click changes lamp")
+		check(g.cabin_lights.front_mode in [0,1],"Only warm on/off")
+	g._begin(0)
+	press_key(KEY_2)
+	check(g.local_seat==1,"2 selects navigator")
+	press_key(KEY_M)
+	check(not g.tool_on,"M cannot pick up map")
+	aim(g.interactions.MAP_DOCK)
+	check(g.interactions.hit()=="map_pickup" and g.interactions.map_dock.visible,"Folded map reachable on dashboard")
+	mouse_click()
+	mouse_click(false)
+	g._process(1)
+	check(g.tool_on and not g.interactions.map_dock.visible and g.car.map_prop.visible,"Click picks up map without duplicate")
+	press_key(KEY_1)
+	g._process(1)
+	check(g.local_seat==0 and g.poses[1].z==1 and not g.interactions.map_dock.visible,"Held map remains with navigator")
+	press_key(KEY_2)
+	check(g.tool_on,"Returning to navigator preserves held item")
+	g._process(1)
+	mouse_click()
+	mouse_click(false)
+	g._process(1)
+	check(not g.tool_on and g.interactions.map_dock.visible and not g.car.map_prop.visible,"Second click folds map onto dashboard")
+	press_key(KEY_3)
+	check(g.local_seat==2,"3 selects camera")
+	press_key(KEY_C)
+	check(not g.tool_on,"C cannot pick up camera")
+	aim(g.interactions.CAMERA_DOCK)
+	check(g.interactions.hit()=="camera_pickup" and g.interactions.camera_dock.visible,"Rear seat camera is reachable")
+	mouse_click()
+	mouse_click(false)
+	g._process(1)
+	check(g.tool_on and g.cam_hud.visible and not g.interactions.camera_dock.visible,"Click enters camera view")
+	mouse_click()
+	mouse_click(false)
+	g._process(1)
+	check(not g.tool_on and g.interactions.camera_dock.visible and not g.car.cam_prop.visible,"Click returns camera to seat")
+	g.ui.show_pause()
+	g.ui._process(4)
+	g._resume()
+	g._begin(0)
+	g._set_seat(1)
+	g.tool_on=false
+	g.car.look.look_at(g.car.to_global(Vector3(-0.076,0.825,-0.423)))
+	g.car.animate(1,0,0,false,0)
+	g.request_radio(0,0.4,true)
+	var mouse=InputEventMouseButton.new()
+	mouse.button_index=MOUSE_BUTTON_LEFT
+	mouse.pressed=true
+	g._unhandled_input(mouse)
+	check(g.radio_drag,"Volume knob drag capture")
+	var motion=InputEventMouseMotion.new()
+	motion.relative=Vector2(25,0)
+	g._unhandled_input(motion)
+	check(g.radio.volume>0.4,"Drag right increases volume")
+	motion.relative=Vector2(-50,0)
+	g._unhandled_input(motion)
+	check(g.radio.volume<0.4,"Drag left decreases volume")
+	mouse.pressed=false
+	g._unhandled_input(mouse)
+	check(g.radio.power and not g.radio_drag,"Drag does not toggle power")
+	g.request_radio(0,0.45,true)
+	g.radio._process(1)
+	var before=g.car.radio_knobs[0].basis*Vector3(0,0,-1)
+	g.request_radio(0,0.55,true)
+	g.radio._process(1)
+	var after=g.car.radio_knobs[0].basis*Vector3(0,0,-1)
+	check(before.signed_angle_to(after,Vector3.BACK)<0,"Volume increases clockwise")
+	check(g.radio.tuner.stream.get_length()<0.3,"Short selector sound")
+	g._begin(0)
+	check(g.cabin_lights.front_mode==0 and not g.cabin_lights.rear_on,"New journey light reset")
+	print("QA_ROLES failures=",failures)
+	get_tree().quit(0 if failures.is_empty() else 1)
+
+func roles_screenshots() -> void:
+	g._begin(0)
+	await capture("driver_controls")
+	aim(g.car.to_local(g.interactions.headlight_button.global_position))
+	await capture("wheel_button")
+	aim(g.car.to_local(g.car.horn_pad.global_position))
+	await capture("horn_pad")
+	aim(g.cabin_lights.targets.front_light)
+	await capture("roof_off")
+	mouse_click()
+	mouse_click(false)
+	await capture("roof_on")
+	g._set_seat(1)
+	aim(g.interactions.MAP_DOCK)
+	await capture("folded_map")
+	mouse_click()
+	mouse_click(false)
+	await capture("map_held")
+	mouse_click()
+	mouse_click(false)
+	await capture("map_returned")
+	g._set_seat(2)
+	g.cabin_lights.use("rear_light")
+	aim(g.interactions.CAMERA_DOCK)
+	await capture("camera_on_seat")
+	mouse_click()
+	mouse_click(false)
+	await capture("camera_view")
+	mouse_click()
+	mouse_click(false)
+	aim(g.cabin_lights.targets.rear_light)
+	await capture("rear_lamp")
+	g.ui.show_settings()
+	await capture("settings")
+	get_tree().quit()
+
+func woodland_test() -> void:
+	var woods=g.forest.woodland
+	check(woods.zones.size()==9,"Quiet and dark regions")
+	check(woods.fires.size()==2 and woods.sightings.size()==4,"Sparse roadside encounters")
+	check(woods.broadleaf_count>500 and woods.dead_count>200 and woods.shrub_count>1000,"Mixed species and shrubs")
+	for at in woods.sightings: check(g.forest.distance_to_road(at)>16,"Sightings clear of all roads")
+	for zone in woods.zones:
+		woods.update_mood(zone.center,150,100)
+		check(woods.fog>=0.008 and woods.fog<0.035,"Fog stays subtle")
+		check(g.forest.environment.ambient_light_energy<0.07 if zone.dark else g.forest.environment.ambient_light_energy>0.10,"Dark / open contrast")
+	var at=woods.zones[4].center
+	var min_fog=1.0
+	var max_fog=0.0
+	for i in 180:
+		woods.update_mood(at,i*3.0,100)
+		min_fog=minf(min_fog,woods.fog)
+		max_fog=maxf(max_fog,woods.fog)
+	check(max_fog-min_fog>0.008,"Mist comes and goes")
+	for p in g.forest.roadside_positions: check(g.forest.distance_to_road(p)>=4.9,"New growth leaves roads clear")
+	g._begin(0)
+	g.ui.show_pause()
+	var frozen_fog=woods.fog
+	g._process(1)
+	check(is_equal_approx(frozen_fog,woods.fog),"Solo pause holds atmosphere")
+	print("QA_WOODLAND failures=",failures," broadleaf=",woods.broadleaf_count," dead=",woods.dead_count," shrubs=",woods.shrub_count," sightings=",woods.sightings.size()," fog_range=",min_fog,"..",max_fog)
+	get_tree().quit(0 if failures.is_empty() else 1)
+
+func woodland_screenshots() -> void:
+	var woods=g.forest.woodland
+	for which in [0,2,4,5]:
+		var zone=woods.zones[which]
+		var road: PackedVector3Array=g.forest.roads[zone.road]
+		g.car.position=road[zone.sample]
+		var direction=(road[zone.sample+1]-g.car.position).normalized()
+		g.car.rotation.y=atan2(-direction.x,-direction.z)
+		g.car.look.rotation=Vector3.ZERO
+		g.elapsed=210
+		woods.update_mood(g.car.position,g.elapsed,100)
+		await capture("area_%d"%which)
+	for i in woods.sightings.size():
+		var spot: Vector3=woods.sightings[i]
+		var encounter=woods.encounters[i]
+		var road: PackedVector3Array=g.forest.roads[encounter.road]
+		var at: int=maxi(1,encounter.sample-15)
+		g.car.position=road[at]
+		var direction=(road[at+1]-road[at]).normalized()
+		g.car.rotation.y=atan2(-direction.x,-direction.z)
+		g._set_seat(1 if encounter.side>0 else 0)
+		g.car.look.look_at(spot+Vector3.UP*1.4)
+		woods.update_mood(g.car.position,g.elapsed,100)
+		await capture("sighting_%d"%i)
+		g._set_seat(2)
+		g.car.look.look_at(spot+Vector3.UP*1.4)
+		g.tool_on=true
+		await get_tree().create_timer(0.5).timeout
+		await capture("sighting_camera_%d"%i)
+		g.tool_on=false
+	print("QA_WOODLAND_SCREENSHOTS fps=",Engine.get_frames_per_second())
+	get_tree().quit()
+
 func effects_test() -> void:
-	check(InputMap.action_get_events("headlights")[0].physical_keycode==KEY_L,"L binding")
-	check(InputMap.action_get_events("horn")[0].physical_keycode==KEY_H,"H binding")
+	check(not InputMap.has_action("headlights"),"No headlights binding")
+	check(not InputMap.has_action("horn"),"No horn binding")
 	g.effects.request_lights()
 	check(not g.effects.headlights,"Lights toggle off")
 	for light in g.effects.lights: check(not light.visible,"Both beams off")
-	Input.action_press("horn")
+	g.horn_pressed=true
 	g.effects._process(0.02)
 	check(g.effects.honking,"Horn held")
 	g.ui.show_pause()
 	g.effects._process(0.02)
 	check(not g.effects.honking,"Menu releases horn")
-	Input.action_release("horn")
+	g.horn_pressed=false
 	g._resume()
 	g._set_seat(1)
 	g.effects.request_lights()
@@ -122,42 +350,6 @@ func effects_test() -> void:
 	g._begin(0)
 	check(g.effects.headlights and not g.effects.honking,"New journey reset")
 	print("QA_EFFECTS failures=",failures)
-	get_tree().quit(0 if failures.is_empty() else 1)
-
-func effects_network(mode: String) -> void:
-	if mode=="effects_host":
-		g.chosen_seat=1
-		g._host()
-		g.effects.next_cue=100
-		await get_tree().create_timer(4).timeout
-		check(not g.effects.headlights and g.effects.honking,"Remote driver controls replicated")
-		g.effects.next_cue=0
-		await get_tree().create_timer(2).timeout
-		check(not g.effects.headlights and g.effects.honking,"Passenger RPC cannot control lights or horn")
-		await get_tree().create_timer(3).timeout
-		check(not g.effects.honking,"Driver disconnect releases horn")
-	else:
-		g.chosen_seat=0 if mode=="effects_driver" else 2
-		g.ui.show_friends()
-		g.address.text="127.0.0.1"
-		g._join()
-		await get_tree().create_timer(1.2).timeout
-		if mode=="effects_driver":
-			g.effects.request_lights()
-			Input.action_press("horn")
-			await get_tree().create_timer(5).timeout
-			check(not g.effects.headlights and g.effects.honking,"Driver sees authoritative state")
-			g.multiplayer.multiplayer_peer.close()
-		else:
-			check(not g.effects.headlights and g.effects.honking,"Late join inherits car controls")
-			g.effects._driver_request.rpc_id(1,"lights",true)
-			g.effects._driver_request.rpc_id(1,"horn",false)
-			await get_tree().create_timer(1).timeout
-			check(not g.effects.headlights and g.effects.honking,"Unauthorized requests rejected")
-			await get_tree().create_timer(3).timeout
-			check(g.effects.cue_count>0,"Shared environmental audio event")
-			check(not g.effects.honking,"Passenger sees horn release on disconnect")
-	print("QA_EFFECTS_NET ",mode," failures=",failures)
 	get_tree().quit(0 if failures.is_empty() else 1)
 
 func driving_points(indices: Array) -> PackedVector3Array:
@@ -272,80 +464,12 @@ func route_screenshots() -> void:
 		await capture("radio_%d"%station)
 	get_tree().quit()
 
-func network(mode: String) -> void:
-	if mode.begins_with("host"):
-		g.chosen_seat=1 if mode=="host_remote" else 0
-		g._host()
-		var start_z: float = g.car.position.z
-		if g.local_seat==1: g.request_radio(1,0.65,true)
-		await get_tree().create_timer(8).timeout
-		check(g.players.size()==3,"Three seats occupied")
-		check(g.car.position.z<start_z-8 if mode=="host_remote" else is_equal_approx(g.car.position.z,start_z),"Driver authority")
-		check(g.voice.outputs.size()>0,"Voice relay to host")
-		check(g.radio.station==1 and is_equal_approx(g.radio.volume,0.65),"Radio authority and synchronization")
-		check(g.poses[2].z>0.5,"Camera pose replication")
-		print("QA_HOST ",mode," players=",g.players.size()," car=",g.car.position," radio=",g.radio.station," failures=",failures)
-		g.car.position=g.forest.destination
-		g._simulate(0.016)
-		await get_tree().create_timer(4).timeout
-	else:
-		g.chosen_seat=int(mode.trim_prefix("join"))
-		g.ui.show_friends()
-		g.address.text="127.0.0.1"
-		g._join()
-		await get_tree().create_timer(3).timeout
-		g.tool_on = g.local_seat>0
-		if g.local_seat==1: g.request_radio(1,0.65,true)
-		if g.local_seat==2:
-			g._radio_request.rpc_id(1,2,1.0,true)
-			var packet=PackedByteArray()
-			packet.resize(640)
-			for i in 320: packet.encode_s16(i*2,int(sin(i*0.17)*3000))
-			for i in 10:
-				g.voice._submit.rpc_id(1,packet)
-				await get_tree().create_timer(0.02).timeout
-		await get_tree().create_timer(6).timeout
-		check(g.running and g.local_seat==g.chosen_seat and g.players.size()==3,"Client seat and roster")
-		check(g.radio.station==1,"Shared radio")
-		check(g.won,"Shared arrival")
-		print("QA_CLIENT seat=",g.local_seat," radio=",g.radio.station," failures=",failures)
-		await get_tree().create_timer(1).timeout
-	get_tree().quit(0 if failures.is_empty() else 1)
-
 func capture(name: String) -> void:
 	await get_tree().create_timer(0.35).timeout
 	await RenderingServer.frame_post_draw
 	var directory=OS.get_environment("SINTRA_QA_OUTPUT")
 	if directory.is_empty(): directory="user://"
 	get_viewport().get_texture().get_image().save_png(directory.path_join(name+".png"))
-
-func nightnet(mode: String) -> void:
-	if mode=="nightnet_host":
-		g._host()
-		await get_tree().create_timer(5).timeout
-		check(g.players.size()==2,"Early passenger joined")
-		check(g.gestures[1],"Remote pointing replicated")
-		g.elapsed=899.7
-		await get_tree().create_timer(1).timeout
-		check(g.lost and not g.won,"Host deadline")
-		await get_tree().create_timer(5).timeout
-		check(2 in g.players.values(),"Late passenger joined expired journey")
-	else:
-		g.chosen_seat=2 if mode=="nightnet_late" else 1
-		g.ui.show_friends()
-		g.address.text="127.0.0.1"
-		g._join()
-		await get_tree().create_timer(2).timeout
-		if mode=="nightnet_late":
-			check(g.lost and g.elapsed==900,"Late join inherits failure and clock")
-		else:
-			check(g.running and g.elapsed>0,"Joined synchronized clock")
-			g.pointing=true
-			await get_tree().create_timer(4).timeout
-			check(g.lost and g.elapsed==900 and not g.won,"Client receives same loss")
-		await get_tree().create_timer(3).timeout
-	print("QA_NIGHTNET ",mode," failures=",failures)
-	get_tree().quit(0 if failures.is_empty() else 1)
 
 func screenshots() -> void:
 	g.ui.show_title()
@@ -408,7 +532,7 @@ func night() -> void:
 	check(g.car.wing_cameras.size()==2,"Both wing mirrors have live views")
 	g.car.animate(1,5,0.8,false,0)
 	check(g.car.wheel.basis != Basis(Vector3.RIGHT,deg_to_rad(68)),"Wheel rotates about column")
-	g.car.update_remote(0,Vector3.ZERO,1)
+	g.car.update_occupant(0,Vector3.ZERO,1)
 	for i in 2:
 		var grip=g.car.wheel.to_global(Vector3((-1 if i==0 else 1)*0.19,0,-0.072))
 		check(g.car.hands[0][i].global_position.distance_to(grip)<0.01,"Driver grip tracks wheel")
@@ -433,11 +557,11 @@ func night() -> void:
 	check(not g._use_radio("preset0"),"Only navigator operates radio")
 	for seat in 3:
 		for yaw in [-2.9,-1.5,0.0,1.5,2.9]:
-			g.car.update_remote(seat,Vector3(0,yaw,0),1,true)
+			g.car.update_occupant(seat,Vector3(0,yaw,0),1,true)
 			var hand=g.car.hands[seat][0 if yaw>=0 else 1]
 			var p=g.car.to_local(hand.global_position)
 			check(absf(p.x)<=0.89 and p.y<1.8,"Point stays inside cabin")
-		g.car.update_remote(seat,Vector3(0,0,1),1,true)
+		g.car.update_occupant(seat,Vector3(0,0,1),1,true)
 		check(g.car.gesture_blend[seat]==0,"Equipment suppresses pointing")
 	g._begin(0)
 	g.elapsed=898

@@ -4,11 +4,12 @@ const EYES = [Vector3(-0.49,1.44,0.34),Vector3(0.49,1.44,0.34),Vector3(0,1.56,1.
 var camera: Camera3D
 var look: Node3D
 var wheel: Node3D
+var horn_pad: Node3D
 var map_prop: Node3D
 var cam_prop: Node3D
 var heads: Array[Node3D] = []
 var people: Array[Node3D] = []
-var remote_tools: Array[Node3D] = []
+var occupant_tools: Array[Node3D] = []
 var pendant: Node3D
 var speed_label: Label3D
 var mirror_camera: Camera3D
@@ -26,6 +27,7 @@ var point_fingers: Array = []
 var gesture_blend = [0.0,0.0,0.0]
 var clock_display: Label3D
 var radio_targets: Array = []
+var gauge_material: StandardMaterial3D
 var radio_knobs: Array[Node3D] = []
 
 func _ready() -> void:
@@ -110,6 +112,7 @@ func _build_instruments() -> void:
 	var panel = QuadMesh.new()
 	panel.size = Vector2(0.60,0.30)
 	var gauge_mat = G.material(Color.WHITE,load("res://assets/gauges.png"))
+	gauge_material=gauge_mat
 	gauge_mat.emission_enabled = true
 	gauge_mat.emission_texture = load("res://assets/gauges.png")
 	gauge_mat.emission = Color("c5d17e")
@@ -128,7 +131,12 @@ func _build_instruments() -> void:
 	G.mesh(wheel,ring,Vector3.ZERO,dark)
 	G.box(wheel,Vector3.ZERO,Vector3(0.36,0.045,0.046),dark)
 	G.box(wheel,Vector3(0,0,0.09),Vector3(0.04,0.045,0.19),dark)
-	G.box(wheel,Vector3.ZERO,Vector3(0.115,0.065,0.095),bezel)
+	horn_pad=G.box(wheel,Vector3.ZERO,Vector3(0.135,0.065,0.108),G.material(Color("3a4037")))
+	# Small moulded horn mark on the centre pad.
+	var ink=G.material(Color("a5a78b"))
+	G.box(horn_pad,Vector3(0,0.034,0),Vector3(0.026,0.002,0.010),ink)
+	G.rod(horn_pad,Vector3(0.012,0.035,0),Vector3(0.024,0.035,-0.009),0.0015,ink)
+	G.rod(horn_pad,Vector3(0.012,0.035,0),Vector3(0.024,0.035,0.009),0.0015,ink)
 	# Cassette radio, vent slats, glovebox and manual gear lever.
 	G.box(self,Vector3(0.1,0.83,-0.516),Vector3(0.48,0.16,0.07),bezel)
 	G.box(self,Vector3(0.1,0.83,-0.472),Vector3(0.42,0.12,0.015),dark)
@@ -235,7 +243,7 @@ func _build_people() -> void:
 		var prop = Node3D.new()
 		prop.position = Vector3(0,0.96,-0.34)
 		n.add_child(prop)
-		remote_tools.append(prop)
+		occupant_tools.append(prop)
 		if seat == 1:
 			_paper(prop,0.72)
 			for x in [-0.33,0.33]: G.sphere(prop,Vector3(x,-0.22,0.025),Vector3(0.07,0.11,0.065),skin)
@@ -290,7 +298,7 @@ func select_seat(seat: int) -> void:
 	for i in 3: people[i].visible = true
 	camera.cull_mask = 0xFFFFF & ~(4<<seat)
 	map_prop.visible = false
-	cam_prop.visible = seat == 2
+	cam_prop.visible = false
 
 func limit_look(tool_on: bool) -> void:
 	var yaw_min = -3.02
@@ -311,7 +319,7 @@ func limit_look(tool_on: bool) -> void:
 	look.rotation.y = clampf(look.rotation.y,yaw_min,yaw_max)
 	look.rotation.x = clampf(look.rotation.x,pitch_min,pitch_max)
 
-func update_remote(seat: int, pose: Vector3, delta: float, pointing: bool = false) -> void:
+func update_occupant(seat: int, pose: Vector3, delta: float, pointing: bool = false) -> void:
 	var pitch = clampf(pose.x,-0.85,0.7)
 	var yaw = clampf(pose.y,-3.02,3.02)
 	var active = pose.z > 0.5
@@ -322,7 +330,7 @@ func update_remote(seat: int, pose: Vector3, delta: float, pointing: bool = fals
 		pitch = clampf(pitch,-0.36,0.43)
 		yaw = clampf(yaw,-1.02,1.02)
 	heads[seat].rotation = Vector3(pitch,yaw,0)
-	var prop: Node3D = remote_tools[seat]
+	var prop: Node3D = occupant_tools[seat]
 	prop.visible = active and seat != 0
 	prop.rotation = Vector3(pitch,yaw,0)
 	var offset = Vector3(-0.06,-0.10,-0.65) if seat == 1 else Vector3(0,-0.02,-0.25)
@@ -377,11 +385,17 @@ func animate(delta: float, speed: float, steer: float, tool_on: bool, time: floa
 	var lean = Vector3(0.29 if local_seat==0 else -0.29,0.10,-0.03)*rear_lean if local_seat<2 else Vector3.ZERO
 	look.position = EYES[local_seat]+lean
 	map_prop.visible = local_seat == 1 and tool_blend > 0.001
-	map_prop.position = Vector3(-0.06,lerpf(-0.48,-0.10,blend),-0.65)
-	map_prop.rotation.x = lerpf(-0.90,0.0,blend)
-	cam_prop.visible = local_seat == 2 and blend < 0.86
-	cam_prop.position = Vector3(lerpf(0.22,0.0,blend),lerpf(-0.43,-0.02,blend),-0.25)
-	cam_prop.rotation.x = lerpf(-0.4,0.0,blend)
+	# Lift from the actual resting place, unfold in the hands, and reverse to put away.
+	var map_start=camera.to_local(to_global(Vector3(0.64,1.080,-0.84)))
+	map_prop.position=map_start.lerp(Vector3(-0.06,-0.10,-0.65),blend)+Vector3(0,sin(blend*PI)*0.14,0)
+	var map_rotation=(camera.global_basis.inverse()*global_basis*Basis.from_euler(Vector3(-PI/2,-0.13,0))).get_rotation_quaternion()
+	map_prop.quaternion=map_rotation.slerp(Quaternion.IDENTITY,blend)
+	map_prop.scale=Vector3(lerpf(0.336,1.0,blend),lerpf(0.282,1.0,blend),1)
+	cam_prop.visible = local_seat == 2 and tool_blend>0.001 and blend < 0.86
+	var camera_start=camera.to_local(to_global(Vector3(0.69,0.83,1.12)))
+	cam_prop.position=camera_start.lerp(Vector3(0,-0.02,-0.25),blend)
+	var camera_rotation=(camera.global_basis.inverse()*global_basis*Basis(Vector3.UP,-0.35)).get_rotation_quaternion()
+	cam_prop.quaternion=camera_rotation.slerp(Quaternion.IDENTITY,blend)
 	var optical = Vector3(0,0,-0.42)*blend if local_seat==2 else Vector3.ZERO
 	camera.position = optical+Vector3(0,sin(time*15)*minf(absf(speed)*0.00045,0.006)*sway_amount,0)
 	var target_fov = 57.0 if local_seat==2 and tool_on else base_fov

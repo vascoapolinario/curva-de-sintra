@@ -1,6 +1,9 @@
 extends Node3D
 const G = preload("res://scripts/geometry.gd")
 const Features = preload("res://scripts/road_features.gd")
+const Woodland = preload("res://scripts/woodland.gd")
+var woodland: Node3D
+var moon: DirectionalLight3D
 
 var roads: Array[PackedVector3Array] = []
 var road_samples: PackedVector3Array = []
@@ -39,7 +42,11 @@ func _ready() -> void:
 		var forward=(road[i+1]-road[i]).normalized()
 		var at=Vector3(feature.position[0],0,feature.position[1])
 		landmark_clearings.append(Transform3D(Basis(Vector3.UP,atan2(-forward.x,-forward.z)),(at+road[i])*0.5))
+	woodland=Woodland.new()
+	add_child(woodland)
+	woodland.setup(self)
 	_build_trees()
+	woodland.build_undergrowth()
 	_build_landmarks()
 	Features.build(self)
 
@@ -50,19 +57,19 @@ func _build_environment() -> void:
 	e.background_color = Color("040709")
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	e.ambient_light_color = Color("697571")
-	e.ambient_light_energy = 0.13
+	e.ambient_light_energy = 0.10
 	e.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	e.fog_enabled = true
 	e.fog_light_color = Color("101714")
 	e.fog_light_energy = 0.5
-	e.fog_density = 0.021
+	e.fog_density = 0.012
 	var world_env = WorldEnvironment.new()
 	world_env.environment = e
 	add_child(world_env)
-	var moon = DirectionalLight3D.new()
+	moon = DirectionalLight3D.new()
 	moon.rotation_degrees = Vector3(-38,-20,0)
 	moon.light_color = Color("758c9a")
-	moon.light_energy = 0.075
+	moon.light_energy = 0.056
 	add_child(moon)
 	var ground_mat = G.material(Color("77765c"), load("res://assets/ground.png"))
 	ground_mat.uv1_scale = Vector3(1500,1500,1)
@@ -197,6 +204,8 @@ func map_uv(p: Vector3) -> Vector2:
 
 func _build_trees() -> void:
 	var placements: Array[Transform3D] = []
+	var broadleaf: Array[Transform3D] = []
+	var dead: Array[Transform3D] = []
 	for pts in roads:
 		for i in range(0,pts.size()-2,4):
 			var right = (pts[i+1]-pts[i]).normalized().cross(Vector3.UP)
@@ -205,8 +214,15 @@ func _build_trees() -> void:
 					var p = pts[i] + right*(depth+rng.randf_range(-1.8,1.8))*side
 					p += Vector3(rng.randf_range(-2.8,2.8),0,rng.randf_range(-2.8,2.8))
 					if distance_to_road(p) < 6.4 or p.distance_to(destination)<24 or near_landmark(p) or near_junction(p,9): continue
+					if woodland.in_sighting_clearing(p) or rng.randf()>woodland.tree_density(p): continue
 					var size = rng.randf_range(0.75,1.5)
-					placements.append(Transform3D(Basis(Vector3.UP,rng.randf()*TAU).scaled(Vector3(size,size*rng.randf_range(0.9,1.4),size)),p))
+					var transform=Transform3D(Basis(Vector3.UP,rng.randf()*TAU).scaled(Vector3(size,size*rng.randf_range(0.9,1.4),size)),p)
+					var choice=rng.randf()
+					var mood: Vector2=woodland.weights(p)
+					if choice<0.08+mood.y*0.24: dead.append(transform)
+					elif choice<0.35+mood.x*0.20: broadleaf.append(transform)
+					else: placements.append(transform)
+	woodland.build_species(broadleaf,dead)
 	var trunk = CylinderMesh.new()
 	trunk.height = 10
 	trunk.top_radius = 0.08
@@ -315,7 +331,7 @@ func _build_landmarks() -> void:
 		_place_sign(pts[-12],(pts[-11]-pts[-12]).normalized(),"CAMINHO\nFECHADO")
 	_build_shelter()
 	_place_sign(roads[8][-18],(roads[8][-17]-roads[8][-18]).normalized(),"S. PEDRO\nABRIGO")
-	# A restrained camcorder-only apparition; possession is deliberately not in this prototype.
+	# A restrained camcorder-only apparition.
 	ghost = Node3D.new()
 	ghost.position = roads[0][65]+Vector3(6,0,0)
 	add_child(ghost)

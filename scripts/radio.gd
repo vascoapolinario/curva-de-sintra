@@ -43,7 +43,7 @@ func setup(owner_game: Node) -> void:
 	tuner.position = player.position
 	tuner.bus = "Radio"
 	tuner.stream = load("res://assets/radio/tuning.wav")
-	tuner.volume_db = -12
+	tuner.volume_db = -20
 	game.car.add_child(tuner)
 	var bus = AudioServer.get_bus_index("Radio")
 	if AudioServer.get_bus_effect_count(bus)==0:
@@ -74,7 +74,7 @@ func apply_state(new_station: int, new_volume: float, on: bool, start_time: floa
 func _process(delta: float) -> void:
 	if not player: return
 	player.volume_db = linear_to_db(maxf(volume,0.0001))-4
-	knob_angles=knob_angles.lerp(Vector2(volume*4.2-2.1,station*1.4-1.4),1.0-exp(-delta*16.0))
+	knob_angles=knob_angles.lerp(Vector2(2.1-volume*4.2,1.4-station*1.4),1.0-exp(-delta*16.0))
 	# Tilt the shaft into the dashboard, then spin around its local axis.
 	for i in 2:
 		game.car.radio_knobs[i].basis=Basis(Vector3.RIGHT,PI/2)*Basis(Vector3.UP,knob_angles[i])

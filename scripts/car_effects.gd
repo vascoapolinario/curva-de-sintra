@@ -1,12 +1,10 @@
 extends Node
-## Shared driver controls and host-directed environmental sounds.
+## Driver controls and positional environmental sounds.
 const CUES = ["owl.wav","fox.wav","branches.wav","forest_steps.wav","tree_creak.wav"]
 var game: Node
 var headlights = true
 var honking = false
 var last_sent_horn = false
-var heartbeat = 0.0
-var horn_received_at = 0
 var horn: AudioStreamPlayer3D
 var switch_sound: AudioStreamPlayer3D
 var dread: AudioStreamPlayer
@@ -50,7 +48,6 @@ func _loop(path: String) -> AudioStreamWAV:
 
 func reset() -> void:
 	last_sent_horn=false
-	heartbeat=0
 	next_cue=rng.randf_range(14,24)
 	hush=0
 	previous_cue=-1
@@ -61,35 +58,19 @@ func reset() -> void:
 
 func request_lights() -> void:
 	if not _can_drive(): return
-	if game.mode=="client": _driver_request.rpc_id(1,"lights",not headlights)
-	else: _commit(not headlights,honking)
+	_commit(not headlights,honking)
 
 func request_horn(held: bool) -> void:
 	if held and not _can_drive(): return
 	if game.local_seat!=0: return
-	if game.mode=="client": _driver_request.rpc_id(1,"horn",held)
-	else: _commit(headlights,held)
+	_commit(headlights,held)
 
 func _can_drive() -> bool:
 	return game.running and game.local_seat==0 and not game.input_blocked()
 
-@rpc("any_peer","call_remote","reliable")
-func _driver_request(control: String, active: bool) -> void:
-	if not multiplayer.is_server() or not game.running or game.won or game.lost: return
-	if game.players.get(multiplayer.get_remote_sender_id(),-1)!=0: return
-	if control=="lights": _commit(active,honking)
-	elif control=="horn":
-		horn_received_at=Time.get_ticks_msec()
-		_commit(headlights,active)
-
 func _commit(on: bool, sounding: bool) -> void:
 	if on==headlights and sounding==honking: return
 	_apply(on,sounding)
-	if game.mode=="host": _state.rpc(on,sounding)
-
-@rpc("authority","call_remote","reliable")
-func _state(on: bool, sounding: bool) -> void:
-	_apply(on,sounding and not game.won and not game.lost)
 
 func _apply(on: bool, sounding: bool, click: bool = true) -> void:
 	if headlights!=on and click and DisplayServer.get_name()!="headless": switch_sound.play()
@@ -100,16 +81,12 @@ func _apply(on: bool, sounding: bool, click: bool = true) -> void:
 		if not horn.playing and DisplayServer.get_name()!="headless": horn.play()
 	else: horn.stop()
 
-func sync_peer(id: int) -> void:
-	_state.rpc_id(id,headlights,honking)
-
 func release_driver() -> void:
-	if game.mode!="client": _commit(headlights,false)
+	_commit(headlights,false)
 
 func stop() -> void:
 	last_sent_horn=false
-	if game.mode!="client": _commit(headlights,false)
-	else: _apply(headlights,false,false)
+	_commit(headlights,false)
 	dread.stop()
 	game.wildlife.stop()
 
@@ -117,29 +94,26 @@ func _process(delta: float) -> void:
 	if not game: return
 	var active: bool = game.running and not game.won and not game.lost
 	var focused = DisplayServer.get_name()=="headless" or DisplayServer.window_is_focused()
-	var held: bool = active and _can_drive() and focused and Input.is_action_pressed("horn")
-	heartbeat+=delta
-	if held!=last_sent_horn or (held and heartbeat>=0.2):
+	if not focused or game.input_blocked(): game.horn_pressed=false
+	var held: bool = active and _can_drive() and focused and game.horn_pressed
+	if held!=last_sent_horn:
 		request_horn(held)
 		last_sent_horn=held
-		heartbeat=0
-	if game.mode=="host" and game.local_seat!=0 and honking and Time.get_ticks_msec()-horn_received_at>900:
-		_commit(headlights,false)
 	if not active:
 		if honking: stop()
 		dread.stop()
 		return
-	var paused: bool = game.mode=="solo" and game.menu.visible
+	var paused: bool = game.menu.visible
 	dread.stream_paused=paused
 	game.wildlife.stream_paused=paused
 	if paused: return
 	if not dread.playing and DisplayServer.get_name()!="headless": dread.play()
 	var tension: float = clampf(game.elapsed/900.0,0,1)
 	var darkness=0.0 if headlights else 3.0
-	dread.volume_db=lerpf(dread.volume_db,-34+tension*7+darkness,1-exp(-delta*0.4))
+	var area: float=game.forest.woodland.tension
+	dread.volume_db=lerpf(dread.volume_db,-37+tension*4+darkness+area*8,1-exp(-delta*0.4))
 	hush=maxf(0,hush-delta)
-	game.forest_sound.volume_db=lerpf(game.forest_sound.volume_db,-19.0 if hush>0 else -9.0,1-exp(-delta*0.6))
-	if game.mode=="client": return
+	game.forest_sound.volume_db=lerpf(game.forest_sound.volume_db,-19.0 if hush>0 else -9.0-area*4,1-exp(-delta*0.6))
 	next_cue-=delta
 	if next_cue>0: return
 	next_cue=rng.randf_range(27,49)-tension*6
@@ -151,9 +125,7 @@ func _process(delta: float) -> void:
 	var pos: Vector3 = game.car.global_position+Vector3(cos(angle)*distance,1.5,sin(angle)*distance)
 	var pitch=rng.randf_range(0.87,1.03)
 	_cue(which,pos,pitch)
-	if game.mode=="host": _cue.rpc(which,pos,pitch)
 
-@rpc("authority","call_remote","reliable")
 func _cue(which: int, pos: Vector3, pitch: float) -> void:
 	if not game.running or game.won or game.lost: return
 	if which<0 or which>=CUES.size() or not pos.is_finite(): return

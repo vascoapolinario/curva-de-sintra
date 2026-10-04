@@ -10,7 +10,6 @@ var bind_buttons: Dictionary = {}
 var display_dialog: ConfirmationDialog
 var old_display: Array = []
 var display_remaining = 0.0
-var mic_meter: ProgressBar
 var controls_theme: Theme
 
 func setup(owner_game: Node) -> void:
@@ -30,10 +29,6 @@ func setup(owner_game: Node) -> void:
 	game.hud.position = Vector2(0,406)
 	game.hud.size.x = 1280
 	game.hud.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
-	game.room_label = label(self,"",14)
-	game.room_label.position = Vector2(42,32)
-	game.toast_label = label(self,"",16)
-	game.toast_label.position = Vector2(42,615)
 	game.cam_hud = Control.new()
 	game.cam_hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	game.cam_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -177,7 +172,6 @@ func _clear() -> void:
 		child.queue_free()
 	rebinding = ""
 	bind_buttons.clear()
-	mic_meter = null
 	panel.visible = true
 	if backdrop: backdrop.material.set_shader_parameter("settings_page",false)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -209,17 +203,16 @@ func show_title() -> void:
 	col.size=Vector2(380,230)
 	col.add_theme_constant_override("separation",5)
 	page.add_child(col)
-	button(col,"Play",func(): game.chosen_seat=0; game._start_solo())
-	button(col,"Multiplayer",show_friends)
+	button(col,"Play",func(): game.chosen_seat=0; game._start_game())
 	button(col,"Settings",show_settings)
 	button(col,"Quit",func(): game.get_tree().quit())
 	game.status=label(col,"",15)
 	game.status.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
 
 func show_pause() -> void:
-	var col = _column("Paused","Online game continues while this menu is open." if game.mode!="solo" else "")
+	var col = _column("Paused")
 	button(col,"Resume",game._resume)
-	if game.mode == "solo": button(col,"Change seat",show_seats)
+	button(col,"Change seat",show_seats)
 	button(col,"Settings",show_settings)
 	button(col,"Return to title",game._leave)
 	button(col,"Quit",func(): game.get_tree().quit())
@@ -228,26 +221,8 @@ func show_pause() -> void:
 func show_seats() -> void:
 	var col = _column("Choose a seat")
 	for i in 3:
-		button(col,["Driver","Navigator","Camera operator"][i],func(): game._set_seat(i); game.players[1]=i; game._resume())
+		button(col,["Driver","Navigator","Camera operator"][i],func(): game._set_seat(i); game._resume())
 	button(col,"Back",show_pause)
-
-func show_friends() -> void:
-	var col = _column("Multiplayer")
-	label(col,"Choose your seat",16)
-	game.seat_choice = OptionButton.new()
-	for text in ["Driver","Navigator","Camera operator"]: game.seat_choice.add_item(text)
-	game.seat_choice.select(game.chosen_seat)
-	game.seat_choice.item_selected.connect(func(i): game.chosen_seat=i)
-	col.add_child(game.seat_choice)
-	button(col,"Host",game._host)
-	game.address = LineEdit.new()
-	game.address.placeholder_text = "Host address"
-	game.address.custom_minimum_size.y = 44
-	col.add_child(game.address)
-	button(col,"Join",game._join)
-	game.status = label(col,"Choose different seats. Voice is available in Audio settings.",15)
-	game.status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	button(col,"Back",show_title)
 
 func show_settings() -> void:
 	_clear()
@@ -274,19 +249,8 @@ func show_settings() -> void:
 	_slider(graphics,"Pixel size","pixels",1,3,0.25)
 	_toggle(graphics,"Scanlines","scanlines")
 	var audio = _tab(tabs,"Audio")
-	for pair in [["Master volume","master"],["Engine","engine"],["Ambience","ambience"],["Radio","radio"],["Voice chat","voice"]]: _slider(audio,pair[0],pair[1],0,1,0.05,"",true)
+	for pair in [["Master volume","master"],["Engine","engine"],["Ambience","ambience"],["Radio","radio"]]: _slider(audio,pair[0],pair[1],0,1,0.05,"",true)
 	_device(audio,"Output device","output_device",AudioServer.get_output_device_list())
-	_device(audio,"Microphone device","input_device",AudioServer.get_input_device_list())
-	_toggle(audio,"Enable microphone","mic_enabled")
-	_choice(audio,"Voice transmission","voice_mode",["Push to talk","Voice activity"])
-	_slider(audio,"Microphone gain","mic_gain",0.25,2,0.05)
-	_slider(audio,"Noise gate","noise_gate",0,0.05,0.002)
-	var meter_row = _row(audio,"Microphone level")
-	mic_meter = ProgressBar.new()
-	mic_meter.custom_minimum_size = Vector2(320,16)
-	mic_meter.show_percentage = false
-	mic_meter.max_value = 1
-	meter_row.add_child(mic_meter)
 	_toggle(audio,"Mute when unfocused","mute_unfocused")
 	var controls = _tab(tabs,"Controls")
 	_slider(controls,"Mouse sensitivity","sensitivity",0.0008,0.006,0.0002)
@@ -300,8 +264,8 @@ func show_settings() -> void:
 		var b = button(row,OS.get_keycode_string(prefs.bindings[action]),func(): rebinding=action; bind_buttons[action].text="Press a key…")
 		b.custom_minimum_size.x = 280
 		bind_buttons[action] = b
-	label(controls,"Hold right mouse to focus · hold left mouse to point.\nAim at the radio and click its controls. Scroll over VOL to adjust volume.",14)
-	label(controls,"Controller: triggers drive · left stick steers · right stick looks\nA brakes · Y raises equipment · X uses targeted radio control · LB talks · Start pauses",14)
+	label(controls,"Hold right mouse to focus · hold left mouse to point.\nAim at a radio control or cabin lamp and click. Drag VOL right or scroll up to increase volume.",14)
+	label(controls,"Controller: triggers drive · left stick steers · right stick looks · Start pauses",14)
 	var access = _tab(tabs,"Accessibility")
 	_slider(access,"Camera movement","sway",0,1,0.05,"",true)
 	_choice(access,"Interface text size","ui_scale",["Standard","Large","Larger"],[1.0,1.15,1.3])
@@ -401,7 +365,7 @@ func _input(event: InputEvent) -> void:
 	for action in bind_buttons: bind_buttons[action].text = OS.get_keycode_string(prefs.bindings[action])
 
 func set_interaction(hit: String) -> void:
-	reticle.visible=game.running and not game.input_blocked() and game.local_seat==1 and not game.tool_on
+	reticle.visible=game.running and not game.input_blocked() and not game.tool_on
 	reticle.modulate.a=0.9 if not hit.is_empty() else (0.3 if game.car.zooming else 0.0)
 
 func show_failure() -> void:
@@ -415,7 +379,6 @@ func show_ending() -> void:
 	button(col,"Return to title",game._leave)
 
 func _process(delta: float) -> void:
-	if is_instance_valid(mic_meter): mic_meter.value=game.voice.input_level
 	if display_remaining > 0:
 		display_remaining-=delta
 		display_dialog.dialog_text="Keep these display settings?\nReverting in %s seconds." % ceili(display_remaining)
