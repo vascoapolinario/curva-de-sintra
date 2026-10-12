@@ -7,6 +7,7 @@ const ACTION_NAMES = {"accelerate":"Accelerate","reverse":"Brake / reverse","lef
 const RESOLUTIONS = [Vector2i(1280,720),Vector2i(1600,900),Vector2i(1920,1080),Vector2i(2560,1440)]
 var values = DEFAULTS.duplicate()
 var bindings = ACTIONS.duplicate()
+var display_revision=0
 
 func _ready() -> void:
 	for name in ["Engine","Ambience","Radio"]:
@@ -49,16 +50,34 @@ func apply() -> void:
 
 func apply_display() -> void:
 	if DisplayServer.get_name() == "headless": return
-	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
-	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS,values.window_mode==1)
-	if values.window_mode == 2:
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
-	elif values.window_mode == 1:
-		DisplayServer.window_set_size(DisplayServer.screen_get_size())
-		DisplayServer.window_set_position(DisplayServer.screen_get_position())
+	display_revision+=1
+	var revision=display_revision
+	var window=get_tree().root
+	var screen=window.current_screen
+	var requested: Vector2i=RESOLUTIONS[clampi(values.resolution,0,RESOLUTIONS.size()-1)]
+	# Use Window properties so its layout stays in step with the native window.
+	# Let the OS finish leaving fullscreen before applying a new window size.
+	if window.mode!=Window.MODE_WINDOWED:
+		window.mode=Window.MODE_WINDOWED
+		await get_tree().process_frame
+		await get_tree().process_frame
+	if revision!=display_revision: return
+	window.borderless=values.window_mode==1
+	if values.window_mode==2:
+		window.mode=Window.MODE_FULLSCREEN
+	elif values.window_mode==1:
+		window.size=DisplayServer.screen_get_size(screen)
+		window.position=DisplayServer.screen_get_position(screen)
 	else:
-		DisplayServer.window_set_size(RESOLUTIONS[clampi(values.resolution,0,RESOLUTIONS.size()-1)])
-		DisplayServer.window_set_position(DisplayServer.screen_get_position()+(DisplayServer.screen_get_size()-DisplayServer.window_get_size())/2)
+		window.size=requested
+		var usable=DisplayServer.screen_get_usable_rect(screen)
+		window.position=usable.position+(usable.size-window.size)/2
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if revision!=display_revision: return
+	# Fullscreen stays monitor-sized; resolution controls the scene's pixel count.
+	# UI coordinates remain 1280 x 720, keeping every menu and button aligned.
+	window.scaling_3d_scale=1.0 if values.window_mode==0 else clampf(float(requested.x)/maxi(1,window.size.x),0.25,2.0)
 
 func bind_key(action: String, key: int) -> void:
 	var previous: int = bindings[action]

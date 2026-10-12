@@ -1,1 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="124" height="124" x="2" y="2" fill="#363d52" stroke="#212532" stroke-width="4" rx="14"/><g fill="#fff" transform="translate(12.322 12.322)scale(.101)"><path d="M105 673v33q407 354 814 0v-33z"/><path fill="#478cbf" d="m105 673 152 14q12 1 15 14l4 67 132 10 8-61q2-11 15-15h162q13 4 15 15l8 61 132-10 4-67q3-13 15-14l152-14V427q30-39 56-81-35-59-83-108-43 20-82 47-40-37-88-64 7-51 8-102-59-28-123-42-26 43-46 89-49-7-98 0-20-46-46-89-64 14-123 42 1 51 8 102-48 27-88 64-39-27-82-47-48 49-83 108 26 42 56 81zm0 33v39c0 276 813 276 814 0v-39l-134 12-5 69q-2 10-14 13l-162 11q-12 0-16-11l-10-65H446l-10 65q-4 11-16 11l-162-11q-12-3-14-13l-5-69z"/><path d="M483 600c0 34 58 34 58 0v-86c0-34-58-34-58 0z"/><circle cx="725" cy="526" r="90"/><circle cx="299" cy="526" r="90"/></g><g fill="#414042" transform="translate(12.322 12.322)scale(.101)"><circle cx="307" cy="532" r="60"/><circle cx="717" cy="532" r="60"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="night" x2="0" y2="1"><stop stop-color="#25312b"/><stop offset="1" stop-color="#080d0b"/></linearGradient>
+    <linearGradient id="road" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#dbc28a"/><stop offset="1" stop-color="#7e805c"/></linearGradient>
+  </defs>
+  <rect x="7" y="7" width="242" height="242" rx="42" fill="url(#night)" stroke="#66725d" stroke-width="5"/>
+  <path d="M24 149 48 104H36L59 68 82 104H70L94 149H70V186H49V149Z M167 129 190 92H179L203 53 227 92H215L239 129H215V173H191V129Z" fill="#46533c"/>
+  <path d="M22 179 39 148H30L47 116 64 148H55L73 179H55V207H39V179Z M182 191 199 158H190L208 125 225 158H217L235 191H217V218H200V191Z" fill="#283829"/>
+  <path d="M76 233C71 192 90 168 128 150C158 136 174 119 150 101C122 80 116 60 145 37L155 37C134 59 137 70 160 88C201 116 193 144 153 168C126 184 124 202 132 233Z" fill="url(#road)"/>
+  <path d="M103 216 105 202M112 185 123 175M139 164 150 157M164 145 172 136M174 121 172 114M161 100 155 95M143 81 139 75M138 62 140 57" fill="none" stroke="#253027" stroke-width="4" stroke-linecap="square"/>
+</svg>

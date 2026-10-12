@@ -10,6 +10,7 @@ var bind_buttons: Dictionary = {}
 var display_dialog: ConfirmationDialog
 var old_display: Array = []
 var display_remaining = 0.0
+var display_busy=false
 var controls_theme: Theme
 
 func setup(owner_game: Node) -> void:
@@ -82,7 +83,7 @@ func setup(owner_game: Node) -> void:
 	display_dialog.title = "Display settings"
 	display_dialog.ok_button_text = "Keep changes"
 	display_dialog.cancel_button_text = "Revert"
-	display_dialog.confirmed.connect(func(): display_remaining=0; prefs.save())
+	display_dialog.confirmed.connect(_keep_display)
 	display_dialog.canceled.connect(_revert_display)
 	add_child(display_dialog)
 	show_title()
@@ -237,7 +238,7 @@ func show_settings() -> void:
 	var display = _tab(tabs,"Display")
 	_choice(display,"Display mode","window_mode",["Windowed","Borderless","Fullscreen"])
 	_choice(display,"Resolution","resolution",["1280 × 720","1600 × 900","1920 × 1080","2560 × 1440"])
-	button(display,"Apply display changes",_try_display)
+	label(display,"Changes preview immediately. In fullscreen, resolution adjusts image detail.",14)
 	_toggle(display,"Vertical sync","vsync")
 	_choice(display,"Frame limit","fps_limit",["30 fps","60 fps","120 fps","144 fps","Unlimited"],[30,60,120,144,0])
 	var graphics = _tab(tabs,"Graphics")
@@ -256,8 +257,6 @@ func show_settings() -> void:
 	_slider(controls,"Mouse sensitivity","sensitivity",0.0008,0.006,0.0002)
 	_toggle(controls,"Invert vertical look","invert_y")
 	_toggle(controls,"Invert horizontal look","invert_x")
-	_slider(controls,"Controller look speed","controller_speed",0.5,4,0.1)
-	_slider(controls,"Controller deadzone","deadzone",0.05,0.4,0.01)
 	label(controls,"Select a binding, then press a key. Escape cancels. Conflicts swap bindings.",14)
 	for action in prefs.ACTIONS:
 		var row = _row(controls,prefs.ACTION_NAMES[action])
@@ -265,7 +264,6 @@ func show_settings() -> void:
 		b.custom_minimum_size.x = 280
 		bind_buttons[action] = b
 	label(controls,"Hold right mouse to focus · hold left mouse to point.\nAim at a radio control or cabin lamp and click. Drag VOL right or scroll up to increase volume.",14)
-	label(controls,"Controller: triggers drive · left stick steers · right stick looks · Start pauses",14)
 	var access = _tab(tabs,"Accessibility")
 	_slider(access,"Camera movement","sway",0,1,0.05,"",true)
 	_choice(access,"Interface text size","ui_scale",["Standard","Large","Larger"],[1.0,1.15,1.3])
@@ -276,8 +274,8 @@ func show_settings() -> void:
 	footer.position = Vector2(110,640)
 	footer.add_theme_constant_override("separation",18)
 	page.add_child(footer)
-	button(footer,"Save & return",func(): prefs.save(); show_pause() if game.running else show_title())
-	button(footer,"Restore defaults",func(): prefs.reset_defaults(); show_settings())
+	button(footer,"Save & return",_save_return)
+	button(footer,"Restore defaults",_restore_defaults)
 
 func _tab(tabs: TabContainer, title: String) -> VBoxContainer:
 	var scroll = ScrollContainer.new()
@@ -325,13 +323,13 @@ func _toggle(parent: Node, title: String, key: String) -> void:
 func _choice(parent: Node, title: String, key: String, options: Array, values: Array = []) -> void:
 	var row = _row(parent,title)
 	var select = OptionButton.new()
+	select.set_meta("setting",key)
 	select.custom_minimum_size.x = 340
 	for item in options: select.add_item(item)
 	select.select(int(prefs.values[key]) if values.is_empty() else maxi(0,values.find(prefs.values[key])))
 	select.item_selected.connect(func(i):
 		if key in ["window_mode","resolution"]:
-			if old_display.is_empty(): old_display=[prefs.values.window_mode,prefs.values.resolution]
-			prefs.values[key]=i
+			_preview_display(key,i)
 		else: prefs.set_value(key,i if values.is_empty() else values[i]))
 	row.add_child(select)
 
@@ -341,21 +339,57 @@ func _device(parent: Node, title: String, key: String, devices: PackedStringArra
 	if list.is_empty(): list.append("Default")
 	_choice(parent,title,key,list,list)
 
+func _preview_display(key: String, value: int) -> void:
+	if display_busy or display_remaining>0: return
+	if prefs.values[key]==value: return
+	old_display=[prefs.values.window_mode,prefs.values.resolution]
+	prefs.values[key]=value
+	_try_display()
+
 func _try_display() -> void:
-	if old_display.is_empty(): old_display=[prefs.values.window_mode,prefs.values.resolution]
-	prefs.apply_display()
-	display_remaining = 12
+	display_busy=true
+	await prefs.apply_display()
+	display_busy=false
+	display_remaining=12
+	display_dialog.dialog_text="Keep these display settings?\nReverting in 12 seconds."
 	display_dialog.popup_centered(Vector2i(460,160))
 
+func _keep_display() -> void:
+	display_remaining=0
+	display_dialog.hide()
+	old_display.clear()
+	prefs.save()
+
 func _revert_display() -> void:
-	display_remaining = 0
+	if display_busy: return
+	display_remaining=0
 	display_dialog.hide()
 	if old_display.size()==2:
 		prefs.values.window_mode=old_display[0]
 		prefs.values.resolution=old_display[1]
-		prefs.apply_display()
-	old_display.clear()
+		old_display.clear()
+		display_busy=true
+		await prefs.apply_display()
+		display_busy=false
+		prefs.save()
 	show_settings()
+
+func _restore_defaults() -> void:
+	if display_busy or display_remaining>0: return
+	old_display=[prefs.values.window_mode,prefs.values.resolution]
+	prefs.reset_defaults()
+	show_settings()
+	if old_display!=[prefs.values.window_mode,prefs.values.resolution]:
+		_try_display()
+	else:
+		old_display.clear()
+		prefs.save()
+
+func _save_return() -> void:
+	if display_busy or display_remaining>0: return
+	prefs.save()
+	if game.running: show_pause()
+	else: show_title()
 
 func _input(event: InputEvent) -> void:
 	if rebinding.is_empty() or not event is InputEventKey or not event.pressed: return

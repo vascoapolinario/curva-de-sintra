@@ -2,7 +2,7 @@ extends Node
 const STATIONS = ["87.6 FM · Estrada","92.3 FM · Nocturno","104.8 FM · Frequência"]
 const FREQUENCIES = ["87.6","92.3","104.8"]
 const FOLDERS = ["01_estrada","02_nocturno","03_frequencia"]
-const DEFAULT_FILES = ["midnight_orchard.wav","last_tram.wav","DoYouRememberTheDays-Game.wav"]
+const DEFAULT_FILES = ["DoYouRememberTheDays-Game.wav","eeriemusic.wav","halloweenloop.wav"]
 var game: Node
 var station = 0
 var volume = 0.4

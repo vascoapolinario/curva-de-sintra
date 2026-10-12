@@ -11,13 +11,16 @@ config_version=5
 [application]
 
 config/name="Curva de Sintra"
+config/version="1.0.6"
+boot_splash/bg_color=Color(0.035, 0.055, 0.043, 1)
+boot_splash/show_image=true
+boot_splash/image="res://assets/startup-logo.png"
+boot_splash/stretch_mode=0
+boot_splash/use_filter=true
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
-
-[audio]
-
-driver/enable_input=false
+config/windows_native_icon="res://assets/app-icon.ico"
 
 [display]
 

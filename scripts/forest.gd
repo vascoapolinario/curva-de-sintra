@@ -3,6 +3,7 @@ const G = preload("res://scripts/geometry.gd")
 const Features = preload("res://scripts/road_features.gd")
 const Woodland = preload("res://scripts/woodland.gd")
 var woodland: Node3D
+var guardrails: Node3D
 var moon: DirectionalLight3D
 
 var roads: Array[PackedVector3Array] = []
@@ -93,29 +94,29 @@ func _build_roads() -> void:
 	for pts in roads:
 		junctions.append(pts[0])
 		junctions.append(pts[-1])
-	# Rounded aprons join branches into one continuous, unmarked surface.
-	for i in range(1,9):
-		var at=Vector3(region.nodes[i][0],0,region.nodes[i][1])
-		_disc(at,6.8,0.003,shoulder)
-		_disc(at,5.3,0.024,asphalt)
-	var post_mat = G.material(Color("86877a"))
-	var red_mat = G.material(Color("54251c"),null,0.1)
+	# The road and verge are triangulated from one joined footprint.
+	var geometry=JSON.parse_string(FileAccess.get_file_as_string("res://assets/road_geometry.json"))
+	_surface(geometry.shoulder,0.002,shoulder)
+	_surface(geometry.asphalt,0.022,asphalt)
+	guardrails=load("res://scripts/guardrails.gd").new()
+	add_child(guardrails)
+	guardrails.setup(self,geometry.guardrails)
 	for pts in roads:
-		_ribbon(pts,5.3,0.002,shoulder)
-		_ribbon(pts,3.65,0.022,asphalt)
 		var st = SurfaceTool.new()
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
 		for i in pts.size()-1:
 			if i%7 < 2 and not near_junction(pts[i],15): _quad(st,pts[i],pts[i+1],0.045,0.033)
 		st.generate_normals()
 		G.mesh(self,st.commit(),Vector3.ZERO,stripe)
-		for i in range(10,pts.size()-1,13):
-			var side = (pts[i+1]-pts[i]).normalized().cross(Vector3.UP)
-			for sign_side in [-1,1]:
-				var p = pts[i]+side*4.65*sign_side
-				if distance_to_road(p) < 4.5 or near_junction(p,17) or p.distance_to(destination)<23: continue
-				G.box(self,p+Vector3(0,0.45,0),Vector3(0.12,0.9,0.12),post_mat)
-				G.box(self,p+Vector3(0,0.73,0),Vector3(0.14,0.12,0.14),red_mat)
+
+func _surface(vertices: Array, height: float, material: Material) -> void:
+	var st=SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for point in vertices:
+		st.set_uv(Vector2(point[0],point[1])*0.17)
+		st.add_vertex(Vector3(point[0],height,point[1]))
+	st.generate_normals()
+	G.mesh(self,st.commit(),Vector3.ZERO,material)
 
 func _disc(at: Vector3, radius: float, height: float, mat: Material) -> void:
 	var st=SurfaceTool.new()
@@ -130,7 +131,7 @@ func _disc(at: Vector3, radius: float, height: float, mat: Material) -> void:
 	G.mesh(self,st.commit(),Vector3.ZERO,mat)
 
 func is_drivable(p: Vector3) -> bool:
-	return distance_to_road(p)<=4.4 or near_junction(p,4.9)
+	return distance_to_road(p)<=4.7 or near_junction(p,12.0)
 
 func blocked_by_obstacle(p: Vector3, yaw: float) -> bool:
 	# Four separating axes test the full car footprint against solid hazards.

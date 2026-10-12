@@ -79,8 +79,6 @@ func _apply() -> void:
 		lenses[i].emission=WARM
 		lenses[i].emission_energy_multiplier=0.32 if enabled else 0.0
 		covers[i].rotation.z=0.015 if enabled else -0.015
-	game.car.gauge_material.albedo_color=Color.WHITE
-	game.car.gauge_material.emission_energy_multiplier=0.55
 
 func hit() -> String:
 	if not game.running or game.input_blocked() or game.tool_on or game.car.tool_blend>0.02: return ""

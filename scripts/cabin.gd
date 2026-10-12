@@ -11,7 +11,7 @@ var heads: Array[Node3D] = []
 var people: Array[Node3D] = []
 var occupant_tools: Array[Node3D] = []
 var pendant: Node3D
-var speed_label: Label3D
+var instruments: Node3D
 var mirror_camera: Camera3D
 var map_material: ShaderMaterial
 var radio_display: Label3D
@@ -27,7 +27,6 @@ var point_fingers: Array = []
 var gesture_blend = [0.0,0.0,0.0]
 var clock_display: Label3D
 var radio_targets: Array = []
-var gauge_material: StandardMaterial3D
 var radio_knobs: Array[Node3D] = []
 
 func _ready() -> void:
@@ -108,17 +107,8 @@ func _build_instruments() -> void:
 	var dark = G.material(Color("141815"))
 	var bezel = G.material(Color("626559"))
 	var amber = G.material(Color("b8ba79"),null,0.5)
-	G.box(self,Vector3(-0.49,1.015,-0.53),Vector3(0.70,0.34,0.12),dark)
-	var panel = QuadMesh.new()
-	panel.size = Vector2(0.60,0.30)
-	var gauge_mat = G.material(Color.WHITE,load("res://assets/gauges.png"))
-	gauge_material=gauge_mat
-	gauge_mat.emission_enabled = true
-	gauge_mat.emission_texture = load("res://assets/gauges.png")
-	gauge_mat.emission = Color("c5d17e")
-	gauge_mat.emission_energy_multiplier = 0.8
-	gauge_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	G.mesh(self,panel,Vector3(-0.49,1.025,-0.458),gauge_mat)
+	instruments=load("res://scripts/instruments.gd").new()
+	add_child(instruments)
 	wheel = Node3D.new()
 	wheel.position = Vector3(-0.49,0.95,-0.22)
 	wheel.rotation.x = deg_to_rad(68)
@@ -126,12 +116,12 @@ func _build_instruments() -> void:
 	var ring = TorusMesh.new()
 	ring.inner_radius = 0.193
 	ring.outer_radius = 0.23
-	ring.rings = 24
+	ring.rings = 40
 	ring.ring_segments = 8
 	G.mesh(wheel,ring,Vector3.ZERO,dark)
 	G.box(wheel,Vector3.ZERO,Vector3(0.36,0.045,0.046),dark)
 	G.box(wheel,Vector3(0,0,0.09),Vector3(0.04,0.045,0.19),dark)
-	horn_pad=G.box(wheel,Vector3.ZERO,Vector3(0.135,0.065,0.108),G.material(Color("3a4037")))
+	horn_pad=G.sphere(wheel,Vector3.ZERO,Vector3(0.175,0.070,0.125),G.material(Color("3a4037")))
 	# Small moulded horn mark on the centre pad.
 	var ink=G.material(Color("a5a78b"))
 	G.box(horn_pad,Vector3(0,0.034,0),Vector3(0.026,0.002,0.010),ink)
@@ -169,9 +159,7 @@ func _build_instruments() -> void:
 	G.box(self,Vector3(0,0.46,0.05),Vector3(0.25,0.20,0.72),dark)
 	G.rod(self,Vector3(0,0.55,0),Vector3(0,0.79,-0.055),0.016,bezel)
 	G.sphere(self,Vector3(0,0.79,-0.055),Vector3(0.065,0.065,0.065),dark)
-	speed_label = G.label(self,"0",Vector3(-0.49,0.946,-0.447),22,Color("c0c387"))
-	speed_label.pixel_size = 0.0009
-	# Mirror glass and a small hanging rosary, as in the visual reference.
+	# Mirror glass and a wooden IST pendant.
 	G.rod(self,Vector3(0.1,1.95,-0.73),Vector3(0.1,1.78,-0.64),0.018,dark)
 	G.box(self,Vector3(0.1,1.76,-0.61),Vector3(0.40,0.16,0.033),dark)
 	var mirror_view = SubViewport.new()
@@ -197,10 +185,7 @@ func _build_instruments() -> void:
 	pendant = Node3D.new()
 	pendant.position = Vector3(0.26,1.77,-0.6)
 	add_child(pendant)
-	for i in 11:
-		G.sphere(pendant,Vector3(sin(float(i)*0.3)*0.026,-i*0.025,0),Vector3(0.018,0.023,0.018),dark)
-	G.box(pendant,Vector3(0,-0.32,0),Vector3(0.018,0.095,0.012),dark)
-	G.box(pendant,Vector3(0,-0.304,0),Vector3(0.062,0.018,0.012),dark)
+	load("res://scripts/pendant.gd").build(pendant)
 
 func _build_people() -> void:
 	for seat in 3:
@@ -407,7 +392,6 @@ func animate(delta: float, speed: float, steer: float, tool_on: bool, time: floa
 	clock_display.text = "%02d:%02d" % [remaining/60,remaining%60]
 	clock_display.modulate = Color("e17858") if remaining<=60 else Color("e1a76b")
 	pendant.rotation.z = sin(time*1.7)*0.02+steer*speed*0.008
-	speed_label.text = str(roundi(absf(speed)*3.6))
 
 func _set_layers(root: Node, mask: int) -> void:
 	if root is VisualInstance3D: root.layers=mask

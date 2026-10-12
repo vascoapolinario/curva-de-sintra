@@ -6,7 +6,7 @@ const Preferences = preload("res://scripts/settings.gd")
 const Interface = preload("res://scripts/interface.gd")
 const Radio = preload("res://scripts/radio.gd")
 @export var top_speed: float = 11.5
-@export var acceleration: float = 3.7
+@export var acceleration: float = 2.9
 @export var mouse_sensitivity: float = 0.0022
 
 var prefs: Node
@@ -30,6 +30,9 @@ var local_seat = 0
 var chosen_seat = 0
 var speed = 0.0
 var steering = 0.0
+var throttle = 0.0
+var engine_rpm = 850.0
+var trip_distance = 0.0
 var tool_on = false
 var controls = Vector3.ZERO
 var elapsed = 0.0
@@ -160,6 +163,10 @@ func _begin(seat: int) -> void:
 	cabin_lights.reset()
 	poses=[Vector3.ZERO,Vector3.ZERO,Vector3.ZERO]
 	steering=0
+	throttle=0
+	engine_rpm=850
+	trip_distance=0
+	car.instruments.reset()
 	_set_seat(seat)
 	poses=[Vector3.ZERO,Vector3.ZERO,Vector3.ZERO]
 	menu.visible = false
@@ -204,6 +211,7 @@ func _resume() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.echo: return
+	if ui.display_busy or ui.display_remaining>0: return
 	var pause_pressed = (event is InputEventKey and event.pressed and event.keycode==KEY_ESCAPE) or (event is InputEventJoypadButton and event.pressed and event.button_index==JOY_BUTTON_START)
 	if event is InputEventKey and event.pressed and event.keycode==KEY_F11:
 		prefs.values.window_mode = 0 if DisplayServer.window_get_mode()==DisplayServer.WINDOW_MODE_FULLSCREEN else 2
@@ -262,20 +270,29 @@ func _physics_process(delta: float) -> void:
 
 func _simulate(delta: float) -> void:
 	if won or lost: return
-	steering = move_toward(steering,controls.y,delta*3.5)
+	# Progressive keyboard steering, with a faster return to centre than turn-in.
+	var returning=absf(controls.y)<0.05 or steering*controls.y<0
+	steering=move_toward(steering,controls.y,delta*(2.5 if returning else 1.55))
+	throttle=move_toward(throttle,controls.x,delta*(4.5 if absf(controls.x)<0.1 else 2.8))
 	if controls.z > 0.5:
-		speed = move_toward(speed,0,delta*12)
-	elif absf(controls.x) > 0.1:
-		var force = acceleration
-		if speed*controls.x < 0: force = 7.5
-		speed = clampf(speed+controls.x*force*delta,-3.4,top_speed)
+		speed=move_toward(speed,0,delta*9)
+		throttle=0
+	elif speed*controls.x < -0.05:
+		# Opposite input brakes before engaging the other direction.
+		speed=move_toward(speed,0,delta*6.5)
+		throttle=0
+	elif absf(throttle)>0.01:
+		var force=acceleration*(1.0-0.28*clampf(absf(speed)/top_speed,0,1))
+		speed=clampf(speed+throttle*force*delta,-3.4,top_speed)
 	else:
-		speed = move_toward(speed,0,delta*1.6)
+		speed=move_toward(speed,0,delta*0.95)
 	var old_position = car.position
 	var old_yaw = car.rotation.y
-	car.rotation.y += steering*speed/2.5*tan(0.45)*delta
+	car.rotation.y += speed/2.65*tan(road_wheel_angle())*delta
 	car.position += -car.basis.z*speed*delta
-	if not forest.is_drivable(car.position) or forest.blocked_by_obstacle(car.position,car.rotation.y):
+	var hit_barrier=forest.guardrails.blocked(car.position,car.rotation.y)
+	if hit_barrier or not forest.is_drivable(car.position) or forest.blocked_by_obstacle(car.position,car.rotation.y):
+		if hit_barrier: effects.barrier_hit(speed)
 		car.position = old_position
 		car.rotation.y = old_yaw
 		speed *= -0.12
@@ -283,8 +300,14 @@ func _simulate(delta: float) -> void:
 		if car.position.distance_to(end) < 2.5 and car.position.distance_to(end) < old_position.distance_to(end):
 			car.position = old_position
 			speed *= -0.12
+	trip_distance+=car.position.distance_to(old_position)
 	if car.position.distance_to(forest.destination) < 7.5:
 		_finish()
+
+func road_wheel_angle() -> float:
+	var speed_ratio=clampf(absf(speed)/top_speed,0,1)
+	var lock=lerpf(0.50,0.26,speed_ratio)
+	return steering*(0.80+0.20*absf(steering))*lock
 
 func _finish() -> void:
 	if lost: return
@@ -312,11 +335,14 @@ func _process(delta: float) -> void:
 		if axis.length() > prefs.values.deadzone:
 			car.look.rotation.y -= axis.x*prefs.values.controller_speed*delta*(-1 if prefs.values.invert_x else 1)
 			car.look.rotation.x -= axis.y*prefs.values.controller_speed*delta*(-1 if prefs.values.invert_y else 1)
-	car.animate(delta,speed,steering,tool_on,elapsed)
+	car.animate(delta,speed,road_wheel_angle()/0.50,tool_on,elapsed)
+	var rpm_target=850.0+absf(speed)*205.0+maxf(0,throttle)*350.0
+	engine_rpm=lerpf(engine_rpm,rpm_target,1.0-exp(-delta*5.0))
+	car.instruments.update_readings(delta,speed,engine_rpm,trip_distance,effects.headlights)
 	interactions.animate(delta)
 	var camera_active = running and local_seat==2 and tool_on and car.tool_blend>0.86 and not won and not lost
 	analog.set_shader_parameter("camcorder",camera_active)
-	forest.ghost.visible = camera_active or lost
+	forest.ghost.visible = lost
 	car.map_material.set_shader_parameter("car_uv",forest.map_uv(car.position))
 	car.map_material.set_shader_parameter("heading",car.rotation.y)
 	for seat in 3:
@@ -329,7 +355,7 @@ func _process(delta: float) -> void:
 	ui.set_interaction(hit)
 	hud.visible = not hit.is_empty() and prefs.values.prompts and not tool_on
 	hud.text = {"horn":"Horn · hold click", "headlights":"Headlights · click", "map_pickup":"Unfold map · click", "map_stow":"Fold map · click", "camera_pickup":"Pick up camcorder · click", "camera_stow":"Put down camcorder · click", "power":"Power · click   /   Volume · drag or scroll", "front_light":"Cabin light · click", "rear_light":"Rear light · click", "station":"Tune · click","quieter":"Volume −","louder":"Volume +","preset0":"87.6 FM","preset1":"92.3 FM","preset2":"104.8 FM"}.get(hit,"")
-	engine_sound.pitch_scale = 0.7+absf(speed)*0.07
+	engine_sound.pitch_scale = 0.7+(engine_rpm-850.0)*0.00030
 	engine_sound.volume_db = -80 if lost else (-14 if running else -23)
 
 func request_radio(station: int, volume: float, power: bool) -> void:

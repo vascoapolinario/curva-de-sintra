@@ -1,7 +1,10 @@
-"""Single road-data source for the world and the paper map. Run with Python + Pillow."""
+"""Single road-data source for the world and the paper map. Run with Python + Pillow + Shapely 2.1."""
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import math, random, json, heapq
+from shapely.geometry import LineString, Point
+from shapely.ops import unary_union
+from shapely import constrained_delaunay_triangles
 ROOT=Path(__file__).resolve().parents[1]
 r=random.Random(5319)
 nodes=[(0,0),(700,-150),(1000,-1100),(100,-1500),(-900,-1100),(-1400,-2200),(-250,-2600),(600,-2400),(1000,-3300),(0,-3700)]
@@ -15,7 +18,7 @@ for a,mid in spurs:
 def tangent(p,prev,nxt):
     dx,dz=nxt[0]-prev[0],nxt[1]-prev[1]; length=math.hypot(dx,dz) or 1
     distances=[v for v in [math.dist(p,prev),math.dist(p,nxt)] if v>0]
-    handle=min(distances)*1.15
+    handle=min(distances)*1.05
     return (dx/length*handle,dz/length*handle)
 
 def sample(path):
@@ -37,6 +40,42 @@ def sample(path):
             out.append([h00*a[k]+h10*ta[k]+h01*b[k]+h11*tb[k] for k in range(2)])
     return out+[list(points[-1])]
 for p in paths: p['samples']=sample(p)
+# Move dead-end turnoffs away from the large route junctions. Each spur now
+# meets a through-road at its own T junction, instead of creating five-way stars.
+attachments=[]
+for i,p in enumerate(paths):
+    if p['kind']!='spur': continue
+    parent=p['a']; main=paths[parent]; index=int(len(main['samples'])*0.16)
+    at=main['samples'][index]; old=p['points'][0]
+    p['points'][0]=tuple(at)
+    junction=len(nodes);nodes.append(tuple(at));p['a']=junction
+    p['samples']=sample(p)
+    attachments.append((parent,junction,index))
+    # Keep a dead end from curling back across an alternative route.
+    others=[LineString(other['samples']) for j,other in enumerate(paths) if j!=i and (other['kind']!='spur' or j<i)]
+    def clear(candidate):
+        line=LineString(candidate)
+        for other in others:
+            crossing=line.intersection(other)
+            if not crossing.is_empty and not crossing.difference(Point(at).buffer(0.01)).is_empty:return False
+        return True
+    if not clear(p['samples']):
+        dx,dz=main['samples'][index+1][0]-at[0],main['samples'][index+1][1]-at[1]
+        length=math.hypot(dx,dz);forward=(dx/length,dz/length);normal=(-forward[1],forward[0])
+        best=None
+        for side in [-1,1]:
+            for reach in [0.7,1.0,1.3]:
+                for bend in [-1,1]:
+                    candidate=[tuple(at)]
+                    for across,along in [(80,24),(190,90),(300,65)]:
+                        candidate.append(tuple(at[k]+normal[k]*across*side*reach+forward[k]*along*bend for k in range(2)))
+                    trial=dict(p,points=candidate);samples=sample(trial)
+                    if clear(samples):
+                        clearance=min(LineString(samples[len(samples)//3:]).distance(other) for other in others)
+                        if best is None or clearance>best[0]:best=(clearance,candidate,samples)
+        assert best is not None, 'No clear dead-end alignment'
+        p['points']=best[1];p['samples']=best[2];nodes[p['b']]=p['points'][-1]
+
 length=sum(sum(math.dist(a,b) for a,b in zip(p['samples'],p['samples'][1:])) for p in paths[:9])
 scale=8100/length
 for p in paths:
@@ -44,15 +83,55 @@ for p in paths:
     p.pop('points')
     p['length']=sum(math.dist(a,b) for a,b in zip(p['samples'],p['samples'][1:]))
 nodes=[[round(x*scale,3),round(z*scale,3)] for x,z in nodes]
-# Check intended connectivity and minimum journey time (11.5 m/s).
+# Dijkstra includes the new turnoffs along each through-road.
+edges=[]
+for i,p in enumerate(paths):
+    cuts=[(0,p['a'])]+[(index,node) for parent,node,index in attachments if parent==i]+[(len(p['samples'])-1,p['b'])]
+    cuts.sort()
+    for (start,a),(end,b) in zip(cuts,cuts[1:]):
+        length=sum(math.dist(p['samples'][j],p['samples'][j+1]) for j in range(start,end))
+        edges.append((a,b,length))
 dist={0:0};q=[(0,0)]
 while q:
     d,n=heapq.heappop(q)
     if d>dist[n]:continue
-    for p in paths:
-        if n not in (p['a'],p['b']):continue
-        other=p['b'] if n==p['a'] else p['a'];nd=d+p['length']
+    for a,b,length in edges:
+        if n not in (a,b):continue
+        other=b if n==a else a;nd=d+length
         if nd<dist.get(other,1e20):dist[other]=nd;heapq.heappush(q,(nd,other))
+# Union roads before triangulation: no overlapping strips, circular patches,
+# or fences across a branch. A small fillet rounds the inside of junctions.
+centre=unary_union([LineString(p['samples']) for p in paths])
+asphalt=centre.buffer(3.65,quad_segs=6).buffer(6,quad_segs=6).buffer(-6,quad_segs=6).simplify(0.025,preserve_topology=True)
+shoulder=asphalt.buffer(1.65,quad_segs=4).simplify(0.04,preserve_topology=True)
+def triangles(shape):
+    result=[]
+    for tri in constrained_delaunay_triangles(shape).geoms:
+        verts=list(tri.exterior.coords)[:3]
+        # Positive winding in X/Z gives an upward-facing Godot front face.
+        if (verts[1][0]-verts[0][0])*(verts[2][1]-verts[0][1])-(verts[1][1]-verts[0][1])*(verts[2][0]-verts[0][0])<0:verts.reverse()
+        result.extend([[round(x,3),round(z,3)] for x,z in verts])
+    return result
+boundary=asphalt.buffer(1.15,quad_segs=5).simplify(0.025,preserve_topology=True)
+guard_runs=[]
+for poly in ([boundary] if boundary.geom_type=='Polygon' else boundary.geoms):
+    for ring in [poly.exterior,*poly.interiors]:
+        if LineString(ring.coords).length<15: continue
+        curve=LineString(ring.coords);count=math.ceil(curve.length/3.5)
+        # Resampling keeps post spacing regular while following every bend.
+        coords=[curve.interpolate(curve.length*j/count) for j in range(count+1)]
+        run=[]
+        for point in coords:
+            p=[round(point.x,3),round(point.y,3)]
+            if math.dist(p,nodes[9])<23:
+                if len(run)>1:guard_runs.append(run)
+                run=[]
+            else:run.append(p)
+        if len(run)>1:guard_runs.append(run)
+geometry=dict(asphalt=triangles(asphalt),shoulder=triangles(shoulder),guardrails=guard_runs)
+(ROOT/'assets/road_geometry.json').write_text(json.dumps(geometry,separators=(',',':')))
+assert asphalt.is_valid and len(guard_runs)>0
+print('Joined road triangles:',len(geometry['asphalt'])//3,'barrier spans:',sum(len(run)-1 for run in guard_runs))
 allpoints=[v for p in paths for v in p['samples']]
 bound=[min(p[0] for p in allpoints)-160,min(p[1] for p in allpoints)-160,max(p[0] for p in allpoints)+160,max(p[1] for p in allpoints)+160]
 def placement(road,fraction,offset):
@@ -89,9 +168,10 @@ for i in range(180):
         draw.line(pts,fill=(168,157,119),width=1)
 for x in range(150,1651,250):draw.line((x,200,x,1600),fill=(164,157,122),width=1)
 for y in range(200,1601,233):draw.line((150,y,1650,y),fill=(164,157,122),width=1)
-for p in paths:
-    pts=[uv(v) for v in p['samples']]
-    draw.line(pts,fill=(62,57,42),width=18,joint='curve');draw.line(pts,fill=(216,200,158),width=8,joint='curve')
+# Draw all outlines before all fills so an incoming road never draws a black
+# seam across another at their shared junction.
+for color,width in [((62,57,42),15),((216,200,158),8)]:
+    for p in paths:draw.line([uv(v) for v in p['samples']],fill=color,width=width,joint='curve')
 names=['PORTELA','LAGOA','CANCELA','CRUZ ALTA','PEDREIRA','FONTE FRIA','MONTE','VALE','ERMITA','S. PEDRO']
 for i in range(10):
     x,y=uv(nodes[i]);draw.ellipse((x-7,y-7,x+7,y+7),fill=(75,65,42))

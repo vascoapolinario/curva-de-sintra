@@ -5,6 +5,9 @@ var game: Node
 var headlights = true
 var honking = false
 var last_sent_horn = false
+var impact: AudioStreamPlayer3D
+var impact_cooldown=0.0
+var impact_count=0
 var horn: AudioStreamPlayer3D
 var switch_sound: AudioStreamPlayer3D
 var dread: AudioStreamPlayer
@@ -34,6 +37,13 @@ func setup(owner_game: Node) -> void:
 	switch_sound.volume_db=-14
 	switch_sound.bus="Engine"
 	game.car.add_child(switch_sound)
+	impact=AudioStreamPlayer3D.new()
+	impact.stream=load("res://assets/barrier_impact.wav")
+	impact.position=Vector3(0,0.7,-1.1)
+	impact.bus="Engine"
+	impact.unit_size=3
+	impact.max_distance=35
+	game.car.add_child(impact)
 	dread=AudioStreamPlayer.new()
 	dread.stream=_loop("res://assets/forest_dread.wav")
 	dread.bus="Ambience"
@@ -47,6 +57,8 @@ func _loop(path: String) -> AudioStreamWAV:
 	return stream
 
 func reset() -> void:
+	impact_cooldown=0
+	impact.stop()
 	last_sent_horn=false
 	next_cue=rng.randf_range(14,24)
 	hush=0
@@ -91,6 +103,7 @@ func stop() -> void:
 	game.wildlife.stop()
 
 func _process(delta: float) -> void:
+	impact_cooldown=maxf(0,impact_cooldown-delta)
 	if not game: return
 	var active: bool = game.running and not game.won and not game.lost
 	var focused = DisplayServer.get_name()=="headless" or DisplayServer.window_is_focused()
@@ -137,3 +150,11 @@ func _cue(which: int, pos: Vector3, pitch: float) -> void:
 	hush=7.0
 	cue_count+=1
 	if DisplayServer.get_name()!="headless": game.wildlife.play()
+
+func barrier_hit(speed: float) -> void:
+	if impact_cooldown>0 or absf(speed)<0.45 or game.input_blocked(): return
+	impact_cooldown=0.65
+	impact_count+=1
+	impact.volume_db=lerpf(-23,-13,clampf(absf(speed)/11.5,0,1))
+	impact.pitch_scale=rng.randf_range(0.92,1.05)
+	if DisplayServer.get_name()!="headless": impact.play()

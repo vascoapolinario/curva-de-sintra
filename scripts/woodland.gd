@@ -1,5 +1,5 @@
 extends Node3D
-## Spatial woodland moods are deterministic across all three players.
+## Spatial woodland moods and distant campfires.
 const G=preload("res://scripts/geometry.gd")
 var forest: Node3D
 var zones: Array[Dictionary]=[]
@@ -52,7 +52,7 @@ func tree_density(p: Vector3) -> float:
 func in_sighting_clearing(p: Vector3) -> bool:
 	for space in clearings:
 		var local=space.affine_inverse()*p
-		# A gap across the verge provides brief views of the fire/silhouettes.
+		# A gap across the verge provides brief views of the distant fires.
 		if absf(local.x)<9 and absf(local.z)<10: return true
 	for ray in sightlines:
 		var along=ray[1]-ray[0]
@@ -164,25 +164,6 @@ func _build_encounter(p: Vector3, yaw: float, burning: bool, number: int) -> voi
 	add_child(root)
 	var char=G.material(Color("30372d"))
 	char.disable_receive_shadows=true
-	var pale=G.material(Color("777e6c"),null,0.045)
-	pale.disable_receive_shadows=true
-	# Tall, asymmetrical shapes: their silhouettes could almost be dead trees.
-	for i in (2 if burning else 3):
-		var figure=Node3D.new()
-		figure.position=Vector3((i-1)*3.6,0,-3-i*1.2)
-		figure.rotation=Vector3(0.06,0.4*i,-0.08 if i%2==0 else 0.11)
-		figure.scale.y=1.10+i*0.10
-		root.add_child(figure)
-		G.cylinder(figure,Vector3(0,1.5,0),0.34,1.8,char,0.15)
-		G.sphere(figure,Vector3(0.05,2.65,0),Vector3(0.28,0.46,0.25),pale)
-		for side in [-1,1]:
-			G.rod(figure,Vector3(side*0.13,0.8,0),Vector3(side*0.20,0.1,0.03),0.07,char)
-			var elbow=Vector3(side*0.56,1.68+0.2*side,0.04)
-			G.rod(figure,Vector3(side*0.19,2.24,0),elbow,0.07,char)
-			G.rod(figure,elbow,Vector3(side*0.65,0.79+0.2*side,0.23),0.045,char)
-		if i==1:
-			G.rod(figure,Vector3(0.02,2.78,0),Vector3(-0.42,3.1,0.05),0.035,char)
-			G.rod(figure,Vector3(-0.42,3.1,0.05),Vector3(-0.54,3.45,0),0.024,char)
 	if not burning: return
 	var earth=G.material(Color("646347"),load("res://assets/ground.png"))
 	G.cylinder(root,Vector3(0,-0.015,0),7,0.04,earth)

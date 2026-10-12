@@ -11,6 +11,21 @@ func run(game: Node, mode: String) -> void:
 	g = game
 	g._start_game()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	if mode=="driving":
+		driving_test()
+		return
+	if mode=="instruments_screenshots":
+		await instruments_screenshots()
+		return
+	if mode=="display":
+		await display_test()
+		return
+	if mode=="barriers":
+		barriers_test()
+		return
+	if mode=="barrier_screenshots":
+		await barrier_screenshots()
+		return
 	if mode=="roles":
 		roles_test()
 		return
@@ -46,8 +61,8 @@ func run(game: Node, mode: String) -> void:
 func smoke() -> void:
 	var start = g.car.position
 	g.controls = Vector3(1,0,0)
-	for i in 120: g._simulate(1.0/60)
-	check(g.car.position.distance_to(start)>5,"Driving")
+	for i in 180: g._simulate(1.0/60)
+	check(g.car.position.distance_to(start)>8,"Smooth acceleration moves the car")
 	g.controls = Vector3(0,0,1)
 	for i in 120: g._simulate(1.0/60)
 	check(absf(g.speed)<0.01,"Braking")
@@ -81,7 +96,7 @@ func smoke() -> void:
 	g.car.animate(1,0,0,true,0)
 	g._process(0.016)
 	check(not g.car.cam_prop.visible and g.car.camera.position.z < -0.4,"Optical camcorder viewpoint")
-	check(g.forest.ghost.visible,"Camcorder apparition")
+	check(not g.forest.ghost.visible,"No standing forest apparition")
 	g.car.update_occupant(1,Vector3(0,0,1),1)
 	check(g.car.occupant_tools[1].visible,"Navigator held map")
 	g.car.update_occupant(2,Vector3(0,0,1),1)
@@ -152,6 +167,7 @@ func roles_test() -> void:
 				mouse_click(false)
 				check(state!=[g.cabin_lights.front_mode,g.cabin_lights.rear_on],"Click changes lamp")
 		check(g.cabin_lights.front_mode in [0,1],"Only warm on/off")
+		check(g.car.instruments.face_material.albedo_color.get_luminance()<0.10,"Cabin lamps do not whiten dial faces")
 	g._begin(0)
 	press_key(KEY_2)
 	check(g.local_seat==1,"2 selects navigator")
@@ -378,8 +394,12 @@ func drive_route(indices: Array) -> float:
 		while target<points.size()-1 and g.car.position.distance_to(points[target])<10: target+=1
 		var direction=(points[target]-g.car.position).normalized()
 		var angle=(-g.car.basis.z).signed_angle_to(direction,Vector3.UP)
-		var desired=clampf(11.2/(1+absf(angle)*1.5),4,11.2)
-		g.controls=Vector3(1 if g.speed<desired else 0,clampf(angle*1.7,-1,1),0)
+		# Look ahead for junctions and brake before a tight turn, as a human driver would.
+		var ahead=(points[mini(target+10,points.size()-1)]-points[target]).normalized()
+		var bend=absf(direction.signed_angle_to(ahead,Vector3.UP))
+		var desired=clampf(11.2/(1+absf(angle)*1.5),3.0,11.2)
+		if bend>0.65: desired=minf(desired,maxf(3.0,10.0/(1+bend*2)))
+		g.controls=Vector3(1 if g.speed<desired else (-1 if g.speed>desired+0.7 else 0),clampf(angle*3.2,-1,1),0)
 		var old: Vector3 = g.car.position
 		g._simulate(1.0/60)
 		distance+=old.distance_to(g.car.position)
@@ -583,3 +603,208 @@ func night() -> void:
 	check(g.won and not g.lost,"Timely arrival wins")
 	print("QA_NIGHT failures=",failures," verge_instances=",g.forest.roadside_positions.size())
 	get_tree().quit(0 if failures.is_empty() else 1)
+
+func driving_test() -> void:
+	var yaws: Array[float]=[]
+	for rate in [30,60,120]:
+		g._begin(0)
+		g.speed=10
+		g.controls=Vector3(0,1,0)
+		for i in int(rate*0.2): g._simulate(1.0/rate)
+		var yaw=absf(g.car.rotation.y)
+		yaws.append(yaw)
+		check(yaw>0.01 and yaw<0.065,"Short steering tap is controlled at "+str(rate)+" Hz")
+		g.controls=Vector3.ZERO
+		for i in int(rate*0.3): g._simulate(1.0/rate)
+		check(absf(g.steering)<0.001,"Steering recentres after release")
+	check(absf(yaws[0]-yaws[2])<0.007,"Steering consistent across simulation rates")
+	g._begin(0)
+	g.controls=Vector3(1,0,0)
+	for i in 180: g._simulate(1.0/60)
+	check(g.speed>5 and g.speed<8,"Progressive acceleration instead of a sudden launch")
+	check(g.trip_distance>8,"Trip records actual movement")
+	g.controls=Vector3(-1,0,0)
+	for i in 90: g._simulate(1.0/60)
+	check(g.speed<=0 and g.speed>-1,"Braking settles before reverse builds")
+	for i in 90: g._simulate(1.0/60)
+	check(g.speed< -1 and g.speed>=-3.4,"Reverse remains controllable")
+	var instruments=g.car.instruments
+	instruments.reset()
+	var rest=instruments.speed_needle.rotation.z
+	for i in 120: instruments.update_readings(1.0/60,10,3000,1234,true)
+	check(absf(instruments.shown_speed-36)<0.1,"Speed dial reads actual km/h")
+	check(instruments.speed_needle.rotation.z<rest-1,"Physical speed needle moves")
+	check(absf(rad_to_deg(instruments.speed_needle.rotation.z)-14)<1,"36 km/h aligns with the dial scale")
+	check(absf(instruments.rpm_needle.rotation.z)<0.01,"3000 RPM aligns with middle of tachometer")
+	check(instruments.trip.text=="001.2","Trip kilometres displayed")
+	instruments.update_readings(1,0,850,1234,false)
+	check(instruments.shown_speed<0.1 and not instruments.headlight_indicator.visible,"Stop and headlight state reflected")
+	g._begin(0)
+	check(g.trip_distance==0 and instruments.trip.text=="000.0","New journey resets instruments")
+	g.ui.show_settings()
+	for node in g.ui.find_children("*","Label",true,false):
+		check(not "controller" in node.text.to_lower(),"No controller options in settings")
+	print("QA_DRIVING failures=",failures," tap_yaw_radians=",yaws)
+	get_tree().quit(0 if failures.is_empty() else 1)
+
+func instruments_screenshots() -> void:
+	g._begin(0)
+	g.set_physics_process(false)
+	g.set_process(false)
+	g.car.look.rotation=Vector3(-0.13,0,0)
+	g.car.animate(1,0,0,false,0)
+	g.car.instruments.update_readings(1,0,850,0,true)
+	for seat in 3: g.car.update_occupant(seat,Vector3.ZERO,1)
+	await capture("instruments_idle")
+	g.car.zooming=true
+	g.car.look.look_at(g.car.instruments.global_position)
+	g.car.animate(1,10,0.14,false,60)
+	g.car.instruments.update_readings(1,10,3000,1234,true)
+	for seat in 3: g.car.update_occupant(seat,Vector3.ZERO,1)
+	await capture("instruments_moving")
+	g.car.instruments.update_readings(1,0,850,1234,false)
+	await capture("instruments_stopped")
+	get_tree().quit()
+
+func display_choice(key: String, value: int) -> void:
+	for node in g.ui.find_children("*","OptionButton",true,false):
+		if node.get_meta("setting","")==key:
+			node.select(value)
+			node.item_selected.emit(value)
+			return
+	check(false,"Missing display choice "+key)
+
+func display_settle() -> void:
+	await get_tree().create_timer(0.4).timeout
+	while g.ui.display_busy: await get_tree().process_frame
+
+func display_test() -> void:
+	check(DisplayServer.get_name()!="headless","Display tests require a real OS window")
+	g.prefs.values.window_mode=0
+	g.prefs.values.resolution=0
+	await g.prefs.apply_display()
+	g.ui.show_settings()
+	await display_settle()
+	display_choice("resolution",1)
+	await display_settle()
+	check(DisplayServer.window_get_size()==Vector2i(1600,900),"Resolution previews immediately")
+	check(g.ui.display_dialog.visible and g.ui.display_remaining>0,"Confirmation visible")
+	await capture("display_confirmation")
+	g.ui.display_dialog.confirmed.emit()
+	check(g.ui.old_display.is_empty(),"Confirmation resets rollback baseline")
+	var saved=ConfigFile.new()
+	saved.load(g.prefs.FILE)
+	check(saved.get_value("settings","resolution")==1,"Confirmed resolution persisted")
+	display_choice("resolution",0)
+	await display_settle()
+	g.ui.display_dialog.canceled.emit()
+	await display_settle()
+	check(DisplayServer.window_get_size()==Vector2i(1600,900) and g.prefs.values.resolution==1,"Cancel restores most recent confirmed size")
+	display_choice("resolution",0)
+	await display_settle()
+	g.ui._process(13)
+	await display_settle()
+	check(DisplayServer.window_get_size()==Vector2i(1600,900),"Timeout restores confirmed size")
+	display_choice("window_mode",2)
+	await display_settle()
+	check(DisplayServer.window_get_mode()==DisplayServer.WINDOW_MODE_FULLSCREEN,"Fullscreen applies live")
+	g.ui.display_dialog.confirmed.emit()
+	display_choice("resolution",0)
+	await display_settle()
+	var scale_before=get_tree().root.scaling_3d_scale
+	check(is_equal_approx(scale_before,1280.0/DisplayServer.window_get_size().x),"Fullscreen resolution updates scene rendering")
+	g.ui.display_dialog.confirmed.emit()
+	display_choice("resolution",1)
+	await display_settle()
+	check(get_tree().root.scaling_3d_scale>scale_before,"Higher fullscreen resolution increases scene detail")
+	g.ui.display_dialog.confirmed.emit()
+	display_choice("window_mode",1)
+	await display_settle()
+	check(DisplayServer.window_get_flag(DisplayServer.WINDOW_FLAG_BORDERLESS),"Borderless applies live")
+	check(DisplayServer.window_get_size()==DisplayServer.screen_get_size(get_tree().root.current_screen),"Borderless fills monitor")
+	g.ui.display_dialog.confirmed.emit()
+	display_choice("window_mode",0)
+	await display_settle()
+	check(DisplayServer.window_get_mode()==DisplayServer.WINDOW_MODE_WINDOWED and DisplayServer.window_get_size()==Vector2i(1600,900),"Returning to windowed restores selected size")
+	check(not DisplayServer.window_get_flag(DisplayServer.WINDOW_FLAG_BORDERLESS),"Window borders restored")
+	g.ui.display_dialog.confirmed.emit()
+	g.ui._restore_defaults()
+	await display_settle()
+	check(DisplayServer.window_get_size()==Vector2i(1280,720),"Defaults apply window size immediately")
+	g.ui.display_dialog.confirmed.emit()
+	await capture("display_settings")
+	g.ui._save_return()
+	print("QA_DISPLAY failures=",failures," mode=",DisplayServer.window_get_mode()," size=",DisplayServer.window_get_size())
+	get_tree().quit(0 if failures.is_empty() else 1)
+
+func barriers_test() -> void:
+	check(g.forest.guardrails.spans.size()>8000,"Continuous barrier network")
+	# Check mesh endpoints against their independent collision span, on every bend.
+	for i in g.forest.guardrails.spans.size():
+		var span=g.forest.guardrails.spans[i]
+		var rail: Transform3D=g.forest.guardrails.rail_transforms[i*2]
+		for sign_value in [-1,1]:
+			var rendered=rail*Vector3(0,0,sign_value*0.5)
+			var post: Vector3=span.position+span.basis.z*(span.half.y-0.075)*sign_value
+			rendered.y=0
+			check(rendered.distance_to(post)<0.03,"Rail meets post on span "+str(i))
+	for road in g.forest.roads:
+		for i in range(1,road.size()-2,9):
+			var direction=(road[i+1]-road[i]).normalized()
+			var yaw=atan2(-direction.x,-direction.z)
+			check(not g.forest.guardrails.blocked(road[i],yaw),"Barriers leave centreline open")
+	for side in [-1,1]:
+		g._begin(0)
+		var road=g.forest.roads[0]
+		var forward=(road[61]-road[60]).normalized()
+		var across=forward.cross(Vector3.UP)*side
+		g.car.position=road[60]
+		g.car.rotation.y=atan2(-across.x,-across.z)
+		g.speed=6
+		g.controls=Vector3(1,0,0)
+		var count=g.effects.impact_count
+		for i in 120:g._simulate(1.0/60)
+		check(g.effects.impact_count>count,"Barrier contact plays impact")
+		check(g.forest.distance_to_road(g.car.position)<3.5,"Cannot leave road through barrier")
+		check(not g.forest.guardrails.blocked(g.car.position,g.car.rotation.y),"Car remains outside solid railing")
+		count=g.effects.impact_count
+		g.effects.barrier_hit(10)
+		check(g.effects.impact_count==count,"Contact cooldown avoids repeated noise")
+	check(g.forest.woodland.fires.size()==2,"Campfires preserved")
+	g._set_seat(2)
+	g.tool_on=true
+	g._process(1)
+	check(not g.forest.ghost.visible,"No random standing figure through camera")
+	print("QA_BARRIERS failures=",failures," spans=",g.forest.guardrails.spans.size())
+	get_tree().quit(0 if failures.is_empty() else 1)
+
+func barrier_screenshots() -> void:
+	g._begin(0)
+	await capture("driver_barriers")
+	g.car.look.look_at(g.car.pendant.global_position+Vector3(0,-0.25,0))
+	await capture("wooden_ist")
+	for index in [0,1,3]:
+		var road=g.forest.roads[index]
+		var at=road.size()-19
+		g.car.position=road[at]
+		var direction=(road[at+1]-road[at]).normalized()
+		g.car.rotation.y=atan2(-direction.x,-direction.z)
+		g.car.look.rotation=Vector3(-0.065,0,0)
+		await capture("junction_%d"%index)
+	var overhead=Camera3D.new()
+	g.add_child(overhead)
+	overhead.position=Vector3(g.forest.region.nodes[1][0],65,g.forest.region.nodes[1][1]+20)
+	overhead.look_at(Vector3(g.forest.region.nodes[1][0],0,g.forest.region.nodes[1][1]),Vector3.FORWARD)
+	overhead.current=true
+	g.forest.environment.ambient_light_energy=0.65
+	g.menu.visible=true
+	g.menu.modulate.a=0
+	await capture("junction_overhead")
+	overhead.queue_free()
+	g.menu.visible=false
+	g.menu.modulate.a=1
+	g.car.camera.current=true
+	g._set_seat(1)
+	g.tool_on=true
+	await capture("paper_map")
+	get_tree().quit()
